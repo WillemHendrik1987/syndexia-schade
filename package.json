@@ -1,0 +1,11 @@
+{
+  "name": "syndexia-schademelding",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Schademeldingsplatform voor Syndexia: QR per gebouw, AI-triage, automatische routering naar aannemers en opvolging.",
+  "engines": { "node": "22.x" },
+  "dependencies": {
+    "nodemailer": "^6.9.16"
+  }
+}

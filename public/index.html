@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="nl-BE">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#892546">
+<meta name="robots" content="noindex">
+<title>Schademeldingen – Syndexia</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { min-height: 100vh; }
+  /* ---------- login ---------- */
+  .login { min-height: 100vh; display: grid; place-items: center; background: var(--bordeaux); padding: 16px; }
+  .login form { width: min(380px, 100%); background: var(--kaart); border-radius: 20px; padding: 28px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 30px 60px rgba(0,0,0,.25); }
+  .login .logo-vak { background: var(--bordeaux); border-radius: 12px; padding: 14px; display: flex; justify-content: center; }
+  .login .logo-vak img { width: 130px; }
+  .login h1 { font-size: 1.5rem; }
+
+  /* ---------- schil ---------- */
+  .schil { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+  .zij { background: var(--bordeaux); color: #fff; padding: 22px 16px; display: flex; flex-direction: column; gap: 26px; position: sticky; top: 0; height: 100vh; }
+  .zij img { width: 116px; display: block; margin-left: 6px; }
+  .zij nav { display: flex; flex-direction: column; gap: 2px; }
+  .zij nav a { color: #F6E4EA; text-decoration: none; padding: 10px 12px; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; font-weight: 500; }
+  .zij nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .zij nav a[aria-current="page"] { background: #fff; color: var(--bordeaux); font-weight: 700; }
+  .zij nav a .badge { background: var(--signaal); color: var(--signaal-ink); border-radius: 999px; font-size: .75rem; font-weight: 700; padding: 1px 8px; }
+  .zij .onder { margin-top: auto; display: flex; flex-direction: column; gap: 10px; font-size: .8rem; color: #EBC9D4; }
+  .zij .systeem { display: flex; flex-direction: column; gap: 4px; }
+  .zij .systeem span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 8px; background: #6BC49A; }
+  .zij .systeem span.uit::before { background: var(--signaal); }
+  .zij button { background: transparent; border: 1px solid rgba(255,255,255,.3); color: #fff; border-radius: 10px; padding: 8px 12px; cursor: pointer; text-align: left; }
+  .hoofd { padding: 28px 32px 60px; min-width: 0; }
+  .kop { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  .kop h1 { font-size: 2rem; }
+  .kop .sub { color: var(--ink-2); margin-top: 4px; }
+
+  /* kerncijfers: een rustige strook, geen grote "hero-getallen" */
+  .cijfers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--kaart); border: 1px solid var(--lijn); border-radius: var(--r-l); margin-bottom: 18px; }
+  .cijfers div { padding: 14px 18px; border-left: 1px solid var(--lijn); }
+  .cijfers div:first-child { border-left: 0; }
+  .cijfers b { font-family: var(--f-kop); font-size: 1.6rem; font-weight: 650; display: block; line-height: 1.1; }
+  .cijfers span { font-size: .85rem; color: var(--ink-2); }
+  .cijfers .let b { color: var(--bordeaux); }
+
+  .balk { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .seg { display: inline-flex; background: var(--kaart); border: 1px solid var(--lijn); border-radius: 12px; padding: 3px; flex-wrap: wrap; }
+  .seg button { border: 0; background: transparent; padding: 8px 12px; border-radius: 9px; cursor: pointer; font-weight: 600; font-size: .9rem; color: var(--ink-2); }
+  .seg button[aria-pressed="true"] { background: var(--bordeaux); color: #fff; }
+  .seg button .n { opacity: .7; margin-left: 4px; font-weight: 500; }
+  .balk input, .balk select { width: auto; padding: 9px 12px; border-radius: 10px; font-size: .92rem; }
+  .balk input[type=search] { min-width: 220px; flex: 1; max-width: 340px; }
+
+  /* lijst met meldingen */
+  .lijst { background: var(--kaart); border: 1px solid var(--lijn); border-radius: var(--r-l); overflow: hidden; }
+  .rij { display: grid; grid-template-columns: 6px minmax(0, 2.4fr) minmax(0, 1.25fr) minmax(0, 1fr) 92px; gap: 14px; align-items: center; padding: 12px 18px 12px 0; border-top: 1px solid var(--lijn); cursor: pointer; }
+  .rij:first-child { border-top: 0; }
+  .rij:hover { background: color-mix(in srgb, var(--blush) 45%, var(--kaart)); }
+  .rij .streep { align-self: stretch; border-radius: 0 3px 3px 0; }
+  .rij.dringend .streep { background: var(--signaal); }
+  .rij .titel b { font-weight: 600; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rij .titel span { font-size: .85rem; color: var(--ink-2); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rij .stat { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  .rij .wie { font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rij .wie.leeg { color: var(--ink-2); font-style: italic; }
+  .rij .tijd { font-size: .85rem; color: var(--ink-2); text-align: right; }
+  .leeg-staat { padding: 48px 20px; text-align: center; color: var(--ink-2); display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .leeg-staat h3 { color: var(--ink); font-size: 1.2rem; }
+
+  /* lade (detailpaneel) */
+  .lade-bg { position: fixed; inset: 0; background: rgba(36,22,28,.35); z-index: 40; }
+  .lade { position: fixed; top: 0; right: 0; bottom: 0; width: min(620px, 100%); background: var(--bg); z-index: 41; overflow-y: auto; box-shadow: -20px 0 40px rgba(0,0,0,.12); display: flex; flex-direction: column; }
+  .lade-kop { background: var(--kaart); border-bottom: 1px solid var(--lijn); padding: 18px 22px; position: sticky; top: 0; z-index: 2; display: flex; flex-direction: column; gap: 10px; }
+  .lade-kop .r1 { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .lade-kop h2 { font-size: 1.45rem; }
+  .lade-kop .tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: .88rem; color: var(--ink-2); }
+  .lade-in { padding: 18px 22px 40px; display: flex; flex-direction: column; gap: 16px; }
+  .sluit { border: 0; background: var(--blush); color: var(--wijn); width: 34px; height: 34px; border-radius: 10px; cursor: pointer; font-size: 18px; flex: none; }
+  .acties { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .acties select { width: auto; padding: 9px 12px; border-radius: 10px; font-size: .92rem; }
+  dl.info { margin: 0; display: grid; grid-template-columns: 130px 1fr; gap: 8px 14px; font-size: .95rem; }
+  dl.info dt { color: var(--ink-2); }
+  dl.info dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .ai-kader { border-left: 3px solid var(--roos); padding-left: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .ai-kader .wie { font-size: .8rem; color: var(--roos); font-weight: 700; }
+  .blok h3 { font-size: 1.1rem; }
+  .notitie { display: flex; gap: 8px; }
+  .notitie input { flex: 1; }
+  details.meer summary { cursor: pointer; color: var(--ink-2); font-size: .9rem; }
+
+  /* gebouwen */
+  .gebouw-rij { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) 130px 110px; gap: 14px; align-items: center; padding: 14px 18px; border-top: 1px solid var(--lijn); cursor: pointer; }
+  .gebouw-rij:first-child { border-top: 0; }
+  .gebouw-rij:hover { background: color-mix(in srgb, var(--blush) 45%, var(--kaart)); }
+  .gebouw-rij b { font-weight: 600; }
+  .dekking { display: flex; gap: 3px; flex-wrap: wrap; }
+  .dekking i { width: 10px; height: 10px; border-radius: 2px; background: var(--blush-2); }
+  .dekking i.ja { background: var(--bordeaux); }
+  .qr-vak { display: grid; grid-template-columns: 170px 1fr; gap: 18px; align-items: center; }
+  .qr-vak .qr { background: #fff; padding: 10px; border-radius: 12px; border: 1px solid var(--lijn); }
+  .qr-vak .qr svg { display: block; width: 100%; height: auto; }
+  .qr-vak .link { font-size: .85rem; overflow-wrap: anywhere; color: var(--ink-2); }
+  .matrix { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  .matrix th { text-align: left; font-weight: 600; color: var(--ink-2); font-size: .82rem; padding: 0 6px 8px; }
+  .matrix td { padding: 5px 6px; border-top: 1px solid var(--lijn); vertical-align: middle; }
+  .matrix td:first-child { white-space: nowrap; }
+  .matrix select { padding: 7px 9px; border-radius: 8px; font-size: .88rem; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-grid .vol { grid-column: 1 / -1; }
+  .schakel { display: flex; gap: 10px; align-items: flex-start; }
+  .schakel input { width: 20px; height: 20px; accent-color: var(--bordeaux); margin-top: 2px; flex: none; }
+
+  /* aannemers */
+  .aannemer-rij { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.2fr) minmax(0, 1.6fr) 110px; gap: 14px; padding: 14px 18px; border-top: 1px solid var(--lijn); cursor: pointer; align-items: center; }
+  .aannemer-rij:first-child { border-top: 0; }
+  .aannemer-rij:hover { background: color-mix(in srgb, var(--blush) 45%, var(--kaart)); }
+  .aannemer-rij.inactief { opacity: .55; }
+
+  @media (max-width: 900px) {
+    .schil { grid-template-columns: 1fr; }
+    .zij { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 12px 16px; }
+    .zij img { width: 86px; }
+    .zij nav { flex-direction: row; overflow-x: auto; flex: 1; }
+    .zij nav a { padding: 8px 10px; white-space: nowrap; }
+    .zij .onder { display: none; }
+    .hoofd { padding: 20px 16px 48px; }
+    .cijfers { grid-template-columns: repeat(2, 1fr); }
+    .cijfers div:nth-child(3) { border-left: 0; }
+    .cijfers div:nth-child(n+3) { border-top: 1px solid var(--lijn); }
+    .rij { grid-template-columns: 6px minmax(0, 1fr) auto; padding-right: 14px; }
+    .rij .wie, .rij .tijd { display: none; }
+    .gebouw-rij, .aannemer-rij { grid-template-columns: 1fr auto; }
+    .gebouw-rij > :nth-child(2), .gebouw-rij > :nth-child(3), .aannemer-rij > :nth-child(2), .aannemer-rij > :nth-child(3) { display: none; }
+    .qr-vak { grid-template-columns: 1fr; }
+    .qr-vak .qr { max-width: 200px; }
+    .form-grid { grid-template-columns: 1fr; }
+    dl.info { grid-template-columns: 1fr; gap: 2px; }
+    dl.info dd { margin-bottom: 8px; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script src="/dashboard.js"></script>
+</body>
+</html>

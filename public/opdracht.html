@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="nl-BE">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#892546">
+<meta name="robots" content="noindex">
+<title>Opdracht – Syndexia</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  .kopblok h1 { font-size: 1.7rem; margin-top: 6px; }
+  .nr { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: .9rem; color: var(--ink-2); }
+  dl.feiten { margin: 0; display: grid; grid-template-columns: 110px 1fr; gap: 10px 14px; }
+  dl.feiten dt { color: var(--ink-2); font-size: .9rem; }
+  dl.feiten dd { margin: 0; }
+  .actie { position: sticky; bottom: 0; background: linear-gradient(to top, var(--bg) 70%, transparent); padding: 18px 0 8px; display: flex; flex-direction: column; gap: 8px; }
+  .gedaan { text-align: center; padding: 24px 8px; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .gedaan .ladder { justify-content: center; }
+  .tip { background: var(--blush); border-radius: var(--r-m); padding: 12px 14px; font-size: .95rem; }
+  .fotoknop { display: inline-flex; }
+</style>
+</head>
+<body>
+<header class="band"><div class="band-in">
+  <img class="logo" src="https://static.wixstatic.com/media/8148b3_ffdefa6217404d49afb9b27cab313b78~mv2.png/v1/fill/w_420,h_240,al_c,q_90/syndexia-logo.png" alt="Syndexia">
+  <div class="waar"><b>Herstelopdracht</b><span id="firma">&nbsp;</span></div>
+</div></header>
+<main class="pagina" id="app"><p class="muted">Laden…</p></main>
+<footer class="voet">Vragen over deze opdracht? <a href="mailto:beheer@syndexia.be">beheer@syndexia.be</a> · <a href="tel:+32473737231">+32 473 73 72 31</a></footer>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const k = location.pathname.split('/a/')[1]?.split(/[/?#]/)[0] || new URLSearchParams(location.search).get('k');
+const fmt = (d) => d ? new Intl.DateTimeFormat('nl-BE', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).format(new Date(d)) : '';
+let m = null; let naFotos = [];
+
+async function post(actie, data = {}) {
+  const r = await fetch('/api/aannemer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ k, actie, ...data }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Er liep iets mis.');
+  return j;
+}
+function toast(t) { const d = document.createElement('div'); d.className = 'toast'; d.textContent = t; document.body.append(d); setTimeout(() => d.remove(), 3500); }
+
+function verklein(file, max = 1600) {
+  return new Promise((ok) => { const img = new Image(); img.onload = () => { const s = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = img.width * s; c.height = img.height * s; c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); ok(c.toDataURL('image/jpeg', .82)); }; img.src = URL.createObjectURL(file); });
+}
+
+// standaard planningsvoorstel: dringend = vandaag binnen 2u, anders volgende werkdag 9u
+function voorstel() {
+  const d = new Date();
+  if (m.dringend) d.setHours(d.getHours() + 2, 0, 0, 0);
+  else { d.setDate(d.getDate() + 1); while ([0, 6].includes(d.getDay())) d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); }
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function teken() {
+  $('#firma').textContent = m.firma || '';
+  const toegang = m.gebouw.toegang ? `<dt>Toegang</dt><dd>${esc(m.gebouw.toegang)}</dd>` : '';
+  const melder = m.melder ? `<dt>Contact bewoner</dt><dd>${esc([m.melder.naam, m.melder.appartement && 'app. ' + m.melder.appartement].filter(Boolean).join(', '))}${m.melder.tel ? `<br><a href="tel:${esc(m.melder.tel)}">${esc(m.melder.tel)}</a>` : ''}</dd>` : '';
+  let actie = '';
+  if (m.status === 'wacht_aanvaarding') {
+    actie = `<div class="actie"><button class="knop breed groot" id="aanvaard">Aanvaard de opdracht</button>
+      <button class="knop stil" id="weigerOpen">Ik kan deze opdracht niet uitvoeren</button>
+      <div id="weigerVak" class="blok verborgen"><div class="veld"><label for="reden">Waarom niet? (optioneel)</label><textarea id="reden" style="min-height:70px" placeholder="Bv. geen capaciteit deze week"></textarea></div>
+      <button class="knop gevaar breed" id="weiger">Opdracht weigeren</button><p class="klein muted">Syndexia schakelt dan meteen een andere vakman in.</p></div></div>`;
+  } else if (m.status === 'aanvaard' || m.status === 'ingepland') {
+    actie = `
+      <section class="blok"><h2 style="font-size:1.2rem">${m.status === 'ingepland' ? 'Andere datum nodig?' : 'Wanneer komt u langs?'}</h2>
+        <div class="veld"><label for="datum">Datum en uur</label><input type="datetime-local" id="datum" value="${voorstel()}"></div>
+        <div class="veld"><label for="planNotitie">Opmerking voor de bewoners (optioneel)</label><input type="text" id="planNotitie" placeholder="Bv. water wordt 1 uur afgesloten"></div>
+        <button class="knop ${m.status === 'ingepland' ? 'licht' : ''} breed" id="plan">${m.status === 'ingepland' ? 'Nieuwe datum doorgeven' : 'Interventie inplannen'}</button></section>
+      <section class="blok"><h2 style="font-size:1.2rem">Herstelling klaar?</h2>
+        <div class="veld"><label for="verslag">Kort verslag (optioneel)</label><textarea id="verslag" style="min-height:80px" placeholder="Wat werd er gedaan? Zijn er vervolgwerken nodig?"></textarea></div>
+        <div class="veld"><span class="label">Foto's na de herstelling (optioneel)</span><div class="fotos" id="naFotos"></div>
+          <label class="knop licht klein fotoknop" style="align-self:flex-start">Foto toevoegen<input type="file" accept="image/*" multiple hidden id="naInput"></label></div>
+        <button class="knop breed groot" id="klaar">Herstelling is uitgevoerd</button></section>`;
+  } else {
+    actie = `<section class="gedaan"><div class="ladder groot"><i class="aan"></i><i class="aan"></i><i class="aan"></i><i class="aan"></i><i class="aan"></i></div>
+      <h2>${m.status === 'uitgevoerd' || m.status === 'afgesloten' ? 'Bedankt, deze opdracht is afgerond' : esc(m.status_label)}</h2><p class="muted">Er is niets meer te doen.</p></section>`;
+  }
+
+  $('#app').innerHTML = `
+    <div class="kopblok"><div class="nr"><span>${esc(m.nummer)}</span>${m.dringend ? '<span class="tag dringend">Dringend</span>' : '<span class="tag normaal">Niet dringend</span>'}<span class="tag s-${m.status === 'wacht_aanvaarding' ? 'oranje' : 'blauw'}">${esc(m.status_label)}</span></div>
+      <h1>${esc(m.titel)}</h1></div>
+    ${m.status === 'ingepland' ? `<div class="tip">Ingepland op <b>${fmt(m.gepland_op)}</b></div>` : ''}
+    <section class="blok">
+      <p>${esc(m.samenvatting)}</p>
+      <dl class="feiten">
+        <dt>Adres</dt><dd><b>${esc(m.gebouw.naam)}</b><br>${esc(m.gebouw.adres || '')}${m.gebouw.adres ? `<br><a href="https://maps.google.com/?q=${encodeURIComponent(m.gebouw.adres)}" target="_blank" rel="noopener">Route</a>` : ''}</dd>
+        <dt>Plaats</dt><dd>${esc(m.locatie || '—')}</dd>
+        <dt>Soort</dt><dd>${esc(m.categorie)}</dd>
+        ${toegang}${melder}
+        <dt>Gemeld</dt><dd>${fmt(m.created_at)}${m.bevestigingen ? ` (${m.bevestigingen + 1} bewoners)` : ''}</dd>
+      </dl>
+      ${m.advies ? `<div class="tip"><b>Tip:</b> ${esc(m.advies)}</div>` : ''}
+    </section>
+    ${m.fotos?.length ? `<div class="fotos">${m.fotos.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="Foto van de bewoner" loading="lazy"></a>`).join('')}</div>` : ''}
+    ${actie}`;
+
+  const on = (id, f) => { const el = document.getElementById(id); if (el) el.onclick = f; };
+  on('aanvaard', async (e) => { e.target.disabled = true; e.target.textContent = 'Bezig…'; try { await post('aanvaard'); toast('Opdracht aanvaard. Syndexia is verwittigd.'); await laad(); } catch (err) { toast(err.message); e.target.disabled = false; } });
+  on('weigerOpen', () => $('#weigerVak').classList.toggle('verborgen'));
+  on('weiger', async (e) => { e.target.disabled = true; try { await post('weiger', { reden: $('#reden').value }); $('#app').innerHTML = '<section class="gedaan"><h2>Bedankt voor uw snelle reactie</h2><p class="muted">Syndexia schakelt een andere vakman in.</p></section>'; } catch (err) { toast(err.message); e.target.disabled = false; } });
+  on('plan', async (e) => { const v = $('#datum').value; if (!v) return toast('Kies een datum.'); e.target.disabled = true; try { await post('plan', { datum: new Date(v).toISOString(), notitie: $('#planNotitie').value }); toast('Ingepland. De bewoners worden verwittigd.'); await laad(); } catch (err) { toast(err.message); e.target.disabled = false; } });
+  on('klaar', async (e) => { e.target.disabled = true; e.target.textContent = 'Bezig…'; try { await post('uitgevoerd', { notitie: $('#verslag').value, fotos: naFotos }); naFotos = []; toast('Bedankt! Gemeld als uitgevoerd.'); await laad(); } catch (err) { toast(err.message); e.target.disabled = false; } });
+  const inp = document.getElementById('naInput');
+  if (inp) inp.onchange = async (e) => { for (const f of [...e.target.files].slice(0, 3 - naFotos.length)) naFotos.push(await verklein(f)); $('#naFotos').innerHTML = naFotos.map((u) => `<img src="${u}" alt="">`).join(''); };
+}
+
+async function laad() {
+  const r = await fetch(`/api/aannemer?k=${encodeURIComponent(k || '')}`);
+  const j = await r.json();
+  if (!r.ok) { $('#app').innerHTML = `<div><h1 style="font-size:1.6rem">Link niet geldig</h1><p class="muted" style="margin-top:6px">${esc(j.error)} Werd de opdracht misschien aan iemand anders toegewezen? Neem contact op met Syndexia.</p></div>`; return; }
+  m = j; teken();
+}
+laad();
+</script>
+</body>
+</html>

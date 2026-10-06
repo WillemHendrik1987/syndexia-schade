@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="nl-BE">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#892546">
+<meta name="robots" content="noindex">
+<title>Uw melding volgen – Syndexia</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  .kopblok h1 { font-size: 1.7rem; margin-top: 4px; }
+  .nr { font-size: .9rem; color: var(--ink-2); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .traject { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .traject div { display: flex; flex-direction: column; gap: 8px; font-size: .78rem; color: var(--ink-2); }
+  .traject div i { height: 12px; border-radius: 3px; background: var(--blush-2); display: block; }
+  .traject div.aan i { background: var(--bordeaux); }
+  .traject div.nu i { background: var(--roos); }
+  .traject div.aan, .traject div.nu { color: var(--ink); font-weight: 600; }
+  .status-groot { font-family: var(--f-kop); font-size: 1.35rem; }
+</style>
+</head>
+<body>
+<header class="band"><div class="band-in">
+  <img class="logo" src="https://static.wixstatic.com/media/8148b3_ffdefa6217404d49afb9b27cab313b78~mv2.png/v1/fill/w_420,h_240,al_c,q_90/syndexia-logo.png" alt="Syndexia">
+  <div class="waar"><b id="gebouw">Uw melding</b><span>Status volgen</span></div>
+</div></header>
+<main class="pagina" id="app"><p class="muted">Laden…</p></main>
+<footer class="voet">Vragen? <a href="mailto:beheer@syndexia.be">beheer@syndexia.be</a> · <a href="tel:+32473737231">+32 473 73 72 31</a></footer>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const k = location.pathname.split('/t/')[1]?.split(/[/?#]/)[0] || new URLSearchParams(location.search).get('k');
+const vraag = new URLSearchParams(location.search).get('opgelost');
+const fmt = (d) => d ? new Intl.DateTimeFormat('nl-BE', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).format(new Date(d)) : '';
+const STAP = { nieuw: 1, wacht_goedkeuring: 1, wacht_aanvaarding: 2, aanvaard: 3, ingepland: 4, uitgevoerd: 5, afgesloten: 5, geannuleerd: 1 };
+const NAMEN = ['Gemeld', 'Doorgegeven', 'Aanvaard', 'Ingepland', 'Hersteld'];
+
+async function laad() {
+  const r = await fetch(`/api/public?a=volg&k=${encodeURIComponent(k || '')}`);
+  const m = await r.json();
+  if (!r.ok) { $('#app').innerHTML = `<div><h1 style="font-size:1.6rem">Melding niet gevonden</h1><p class="muted" style="margin-top:6px">${esc(m.error)}</p></div>`; return; }
+  $('#gebouw').textContent = m.gebouw;
+  const stap = STAP[m.status] || 1;
+  const toonFeedback = m.status === 'uitgevoerd' && !m.feedback;
+  $('#app').innerHTML = `
+    <div class="kopblok"><div class="nr"><span>${esc(m.nummer)}</span>${m.dringend ? '<span class="tag dringend">Dringend</span>' : ''}</div>
+      <h1>${esc(m.titel)}</h1></div>
+    <section class="blok">
+      <div class="status-groot">${m.status === 'geannuleerd' ? 'Deze melding werd geannuleerd' : m.status === 'ingepland' && m.gepland_op ? `Ingepland op ${fmt(m.gepland_op)}` : esc(m.status_label)}</div>
+      <div class="traject">${NAMEN.map((n, i) => `<div class="${i + 1 < stap ? 'aan' : i + 1 === stap ? (stap === 5 ? 'aan' : 'nu') : ''}"><i></i>${n}</div>`).join('')}</div>
+    </section>
+    ${toonFeedback ? `<section class="blok" id="fb"><h2 style="font-size:1.25rem">Is het probleem opgelost?</h2>
+      <p class="klein muted">De vakman meldt dat de herstelling klaar is. Klopt dat?</p>
+      <textarea id="fbTekst" style="min-height:64px" placeholder="Optioneel: wat is er nog mis?" class="${vraag === 'nee' ? '' : 'verborgen'}"></textarea>
+      <div class="chips"><button class="knop" data-fb="ja">Ja, opgelost</button><button class="knop licht" data-fb="nee">Nee, nog niet</button></div></section>` : ''}
+    ${m.fotos?.length ? `<div class="fotos">${m.fotos.map((u) => `<img src="${esc(u)}" alt="Foto bij de melding" loading="lazy">`).join('')}</div>` : ''}
+    <section class="blok"><h2 style="font-size:1.15rem">Verloop</h2>
+      <ol class="tijdlijn">${m.tijdlijn.map((e) => `<li><div>${esc(e.tekst)}<div class="wanneer">${fmt(e.op)}</div></div></li>`).join('')}</ol></section>
+    <p class="klein muted">${esc(m.categorie)}${m.locatie ? ` — ${esc(m.locatie)}` : ''}</p>`;
+  document.querySelectorAll('[data-fb]').forEach((b) => (b.onclick = async () => {
+    const t = $('#fbTekst');
+    if (b.dataset.fb === 'nee' && t.classList.contains('verborgen')) { t.classList.remove('verborgen'); t.focus(); return; }
+    b.disabled = true;
+    const r2 = await fetch('/api/public?a=feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ k, opgelost: b.dataset.fb, tekst: t.value }) });
+    if (r2.ok) { $('#fb').innerHTML = `<h2 style="font-size:1.25rem">${b.dataset.fb === 'ja' ? 'Bedankt, we sluiten de melding af.' : 'Bedankt, we verwittigen de vakman en de syndicus.'}</h2>`; setTimeout(laad, 1500); }
+  }));
+}
+laad();
+</script>
+</body>
+</html>
