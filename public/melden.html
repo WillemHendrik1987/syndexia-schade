@@ -252,6 +252,7 @@ function overzicht(foutTekst = '') {
         <div class="veld vol"><label for="tel">Telefoon</label><input type="tel" id="tel" autocomplete="tel"></div>
       </div>
       <label class="vink"><input type="checkbox" id="contactAannemer"><span>De vakman mag mij bellen om toegang af te spreken.</span></label>
+      <label class="vink"><input type="checkbox" id="whatsapp"><span>Stuur mij updates via WhatsApp (op het telefoonnummer hierboven).</span></label>
       <p class="klein muted">We gebruiken uw gegevens enkel voor de opvolging van deze melding.</p>
     </section>
     <button class="knop breed groot" id="verstuur">Melding versturen</button>
@@ -266,7 +267,7 @@ function overzicht(foutTekst = '') {
     try {
       const r = await api('indienen', {
         concept_id: staat.concept, aanvulling: $('#aanvulling').value,
-        melder: { naam: $('#naam').value, appartement: $('#appNr').value, email: $('#email').value, tel: $('#tel').value, contact_aannemer: $('#contactAannemer').checked },
+        melder: { naam: $('#naam').value, appartement: $('#appNr').value, email: $('#email').value, tel: $('#tel').value, contact_aannemer: $('#contactAannemer').checked, whatsapp: $('#whatsapp').checked },
       });
       klaarScherm(r, !!$('#email').value.trim());
     } catch (err) { overzicht(err.message); }

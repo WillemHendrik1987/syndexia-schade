@@ -144,3 +144,26 @@ alter table public.sm_meldingen
   add column if not exists manueel boolean not null default false,
   add column if not exists manueel_uitvoerder text,
   add column if not exists manueel_tel text;
+
+-- v1.3: telefonisch noodalarm (Twilio) + WhatsApp
+alter table public.sm_aannemers add column if not exists noodnummer text;
+alter table public.sm_meldingen add column if not exists melder_whatsapp boolean not null default false;
+alter table public.sm_instellingen
+  add column if not exists noodalarm_actief boolean not null default false,
+  add column if not exists noodalarm_wanneer text not null default 'buiten_kantooruren', -- altijd | buiten_kantooruren
+  add column if not exists kantoor_van int not null default 8,
+  add column if not exists kantoor_tot int not null default 18,
+  add column if not exists noodalarm_categorieen text[] not null default '{lift,sanitair,deuren_toegang,brandveiligheid,elektriciteit,verwarming,dak_gevel}',
+  add column if not exists syndicus_gsm text,
+  add column if not exists syndicus_tel text default '+32 473 73 72 31';
+create table if not exists public.sm_oproepen (
+  id uuid primary key default gen_random_uuid(),
+  melding_id uuid not null references public.sm_meldingen(id) on delete cascade,
+  aannemer_id uuid references public.sm_aannemers(id) on delete set null,
+  nummer text, call_sid text, poging int not null default 1,
+  status text not null default 'gestart', toets text,
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+);
+create index if not exists sm_oproepen_melding on public.sm_oproepen (melding_id);
+create index if not exists sm_oproepen_sid on public.sm_oproepen (call_sid);
+alter table public.sm_oproepen enable row level security;

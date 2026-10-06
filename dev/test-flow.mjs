@@ -224,5 +224,91 @@ await call('/api/admin?a=melding_actie', { id: m6.id, actie: 'toewijzen', aannem
 d = await db(); const m6b = d.sm_meldingen.find((m) => m.id === m6.id);
 check(!m6b.manueel && m6b.status === 'wacht_aanvaarding', 'terug naar aannemer → manueel uit, wacht op aanvaarding');
 
+// 17. TELEFONISCH NOODALARM
+const crypto = await import('node:crypto');
+const tw = async () => (await fetch(B + '/__twilio_log')).json();
+// Twilio-webhook nabootsen, met (optioneel) een geldige handtekening
+async function twilioPost(pad, velden, geldig = true) {
+  const url = B + pad;
+  const data = url + Object.keys(velden).sort().map((k) => k + velden[k]).join('');
+  const sig = crypto.createHmac('sha1', geldig ? 'twilio-test-token' : 'fout').update(data).digest('base64');
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Twilio-Signature': sig }, body: new URLSearchParams(velden) });
+  return { status: r.status, xml: await r.text() };
+}
+const { naarE164, uitspreken, buitenKantooruren, feestdagen } = await import('../lib/telefoon.js');
+check(naarE164('0477 11 22 33') === '+32477112233' && naarE164('0032 50 12 34 56') === '+3250123456' && naarE164('+32 (0)?') === null, 'nummers → internationaal formaat');
+check(uitspreken('0477112233') === '0 4 7 7, 1 1, 2 2, 3 3', 'nummer cijfer per cijfer uitgesproken');
+const inst0 = { kantoor_van: 8, kantoor_tot: 18 };
+check(buitenKantooruren(inst0, new Date('2026-10-10T10:00:00+02:00')) === true, 'zaterdag 10u = buiten kantooruren');
+check(buitenKantooruren(inst0, new Date('2026-10-07T10:00:00+02:00')) === false, 'woensdag 10u = binnen kantooruren');
+check(buitenKantooruren(inst0, new Date('2026-10-07T21:30:00+02:00')) === true, 'woensdag 21u30 = buiten kantooruren');
+check(feestdagen(2026).has('2026-04-06') && feestdagen(2026).has('2026-05-14') && feestdagen(2026).has('2026-05-25'), 'Paasmaandag, O.L.H.-Hemelvaart, Pinkstermaandag 2026 correct');
+check(buitenKantooruren(inst0, new Date('2026-11-11T10:00:00+01:00')) === true, 'Wapenstilstand (woensdag) = buiten kantooruren');
+
+// instellingen: alarm aan, altijd, voor lift
+check((await call('/api/admin?a=instellingen', { syndicus_naam: 'Syndexia', syndicus_email: 'beheer@syndexia.be', auto_doorsturen_niet_dringend: true, escalatie_dringend_min: 120, herinnering_normaal_uren: 48, dagrapport: true,
+  noodalarm_actief: true, noodalarm_wanneer: 'altijd', kantoor_van: 8, kantoor_tot: 18, noodalarm_categorieen: ['lift'], syndicus_gsm: '0470 00 00 01', syndicus_tel: '050 11 11 11' })).status === 200, 'noodalarm aangezet');
+check((await call('/api/admin?a=instellingen', { syndicus_gsm: 'geen nummer' })).status === 400, 'ongeldig gsm-nummer geweigerd');
+const nood1 = (await call('/api/admin?a=aannemer_opslaan', { firma: 'Liftnood NV', email: 'nood@lift.be', vakgebied: 'lift', telefoon: '050 22 22 22', noodnummer: '0499 99 99 99' })).j.aannemer;
+const nood2 = (await call('/api/admin?a=aannemer_opslaan', { firma: 'Reserve Liftnood', email: 'reserve@lift.be', vakgebied: 'lift', noodnummer: '0488 88 88 88' })).j.aannemer;
+await call('/api/admin?a=toewijzing', { gebouw_id: puerto.id, categorie: 'lift', prioriteit: 1, aannemer_id: nood1.id });
+await call('/api/admin?a=toewijzing', { gebouw_id: puerto.id, categorie: 'lift', prioriteit: 2, aannemer_id: nood2.id });
+let twVoor = (await tw()).length; let mlV = (await mails()).length;
+const an7 = await call('/api/public?a=analyse', { t: puerto.qr_token, beschrijving: 'De lift zit vast tussen twee verdiepingen, deuren gaan niet open', locatie: 'Lift' });
+const ind7 = await call('/api/public?a=indienen', { t: puerto.qr_token, concept_id: an7.j.concept_id, melder: { naam: 'An', appartement: '3B', tel: '0477 11 22 33', contact_aannemer: true, whatsapp: true } });
+d = await db(); let m7 = d.sm_meldingen.find((m) => m.nummer === ind7.j.nummer);
+let log7 = (await tw()).slice(twVoor);
+const oproep1 = log7.find((x) => x.soort === 'call');
+check(oproep1 && oproep1.To === '+32499999999' && oproep1.Url.includes('a=twiml') && oproep1.Url.includes(m7.aannemer_token), 'liftfirma gebeld op 24/7-noodnummer');
+check(log7.some((x) => x.soort === 'message' && x.To === 'whatsapp:+32470000001' && /Dringende melding/.test(x.Body)), 'WhatsApp naar syndicus');
+check(log7.some((x) => x.soort === 'message' && x.To === 'whatsapp:+32477112233' && /telefonisch verwittigd/.test(x.Body)), 'WhatsApp naar melder (opt-in)');
+ml = await mails();
+check(ml.slice(mlV).some((x) => x.to.includes('nood@lift.be') && x.cc === 'beheer@syndexia.be'), 'dringende opdrachtmail met Syndexia in cc');
+// het gesprek
+const pad = `/api/telefoon?a=twiml&k=${m7.aannemer_token}`;
+check((await twilioPost(pad, { CallSid: oproep1.sid }, false)).status === 403, 'vervalste Twilio-aanroep geweigerd (403)');
+const gesprek = await twilioPost(pad, { CallSid: oproep1.sid });
+check(gesprek.status === 200 && gesprek.xml.includes('<Gather') && gesprek.xml.includes('Druk op 1'), 'TwiML met "druk 1 om te aanvaarden"');
+check(gesprek.xml.includes('Puerto 10') && gesprek.xml.includes('0 4 7 7, 1 1, 2 2, 3 3') && gesprek.xml.includes('appartement 3B'), 'stem noemt gebouw, adres en nummer van de melder');
+// niet opgenomen → seintje syndicus, cron belt opnieuw
+twVoor = (await tw()).length;
+await twilioPost(`/api/telefoon?a=status&k=${m7.aannemer_token}`, { CallSid: oproep1.sid, CallStatus: 'no-answer' });
+log7 = (await tw()).slice(twVoor);
+check(log7.some((x) => x.soort === 'message' && /nam niet op \(poging 1\/3\)/.test(x.Body)), 'niet opgenomen → WhatsApp syndicus');
+cr = await call('/api/cron?key=cron-dev');
+check(!cr.j.log.some((l) => l.includes(m7.nummer)), 'niet meteen opnieuw bellen (wacht ±10 min)');
+await fetch(B + '/__tijd?min=10');
+cr = await call('/api/cron?key=cron-dev');
+check(cr.j.log.some((l) => l.includes(m7.nummer) && /opnieuw gebeld \(2\/3\)/.test(l)), 'na 10 min: poging 2');
+d = await db();
+for (const o of d.sm_oproepen.filter((o) => o.melding_id === m7.id)) await twilioPost(`/api/telefoon?a=status&k=${m7.aannemer_token}`, { CallSid: o.call_sid, CallStatus: 'no-answer' });
+await fetch(B + '/__tijd?min=10');
+cr = await call('/api/cron?key=cron-dev');
+check(cr.j.log.some((l) => l.includes(m7.nummer) && /\(3\/3\)/.test(l)), 'poging 3');
+d = await db();
+for (const o of d.sm_oproepen.filter((o) => o.melding_id === m7.id)) await twilioPost(`/api/telefoon?a=status&k=${m7.aannemer_token}`, { CallSid: o.call_sid, CallStatus: 'no-answer' });
+twVoor = (await tw()).length;
+await fetch(B + '/__tijd?min=10');
+cr = await call('/api/cron?key=cron-dev');
+check(cr.j.log.some((l) => l.includes(m7.nummer) && /niet bereikt → escalatie/.test(l)), '3x niet bereikt → escalatie');
+d = await db(); m7 = d.sm_meldingen.find((m) => m.id === m7.id);
+log7 = (await tw()).slice(twVoor);
+check(m7.aannemer_id === nood2.id && log7.some((x) => x.soort === 'call' && x.To === '+32488888888'), 'reserve-liftfirma krijgt opdracht én wordt gebeld');
+// reserve drukt 1
+const oproepR = log7.find((x) => x.soort === 'call');
+const t1 = await twilioPost(`/api/telefoon?a=toets&k=${m7.aannemer_token}`, { CallSid: oproepR.sid, Digits: '1' });
+check(t1.xml.includes('opdracht is aanvaard'), 'toets 1 → stem bevestigt aanvaarding');
+d = await db(); m7 = d.sm_meldingen.find((m) => m.id === m7.id);
+check(m7.status === 'aanvaard' && d.sm_events.some((e) => e.melding_id === m7.id && /toets 1/.test(e.tekst)), 'melding aanvaard via telefoon, zichtbaar in tijdlijn');
+log7 = (await tw()).slice(twVoor);
+check(log7.some((x) => x.soort === 'message' && x.To === 'whatsapp:+32470000001' && /✅/.test(x.Body)) && log7.some((x) => x.soort === 'message' && x.To === 'whatsapp:+32477112233' && /aanvaard/.test(x.Body)), 'WhatsApp "aanvaard" naar syndicus en melder');
+check((await twilioPost(`/api/telefoon?a=twiml&k=${m7.aannemer_token}`, {})).xml.includes('al behandeld'), 'opnieuw bellen na aanvaarding → "al behandeld"');
+// buiten categorie of binnen kantooruren: geen alarm
+await call('/api/admin?a=instellingen', { syndicus_email: 'beheer@syndexia.be', noodalarm_actief: true, noodalarm_wanneer: 'altijd', noodalarm_categorieen: [], syndicus_gsm: '0470000001', dagrapport: true, auto_doorsturen_niet_dringend: true });
+twVoor = (await tw()).length;
+const an8 = await call('/api/public?a=analyse', { t: puerto.qr_token, beschrijving: 'Lift staat stil, buiten dienst' });
+await call('/api/public?a=indienen', { t: puerto.qr_token, concept_id: an8.j.concept_id });
+check(!(await tw()).slice(twVoor).some((x) => x.soort === 'call'), 'categorie niet aangevinkt → niet gebeld (enkel mail)');
+
 console.log(fouten.length ? `\n${fouten.length} FOUT(EN)` : '\nALLES GROEN');
 process.exit(fouten.length ? 1 : 0);

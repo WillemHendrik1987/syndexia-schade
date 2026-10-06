@@ -134,6 +134,7 @@ async function indienen(req, res) {
     melder_email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : null,
     melder_tel: String(melder.tel || '').trim().slice(0, 40) || null,
     melder_contact_aannemer: !!melder.contact_aannemer,
+    melder_whatsapp: !!melder.whatsapp && !!String(melder.tel || '').trim(),
     ip_hash: ip,
   });
   await db.remove('sm_concepten', `id=eq.${c.id}`); // foto's blijven; ze horen nu bij de melding

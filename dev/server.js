@@ -15,11 +15,18 @@ process.env.DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || 'test123';
 process.env.SESSION_SECRET = 'dev-secret';
 process.env.CRON_SECRET = 'cron-dev';
 process.env.SITE_URL = `http://localhost:${PORT}`;
+// nagebootste Twilio
+process.env.TWILIO_API_BASE = `http://localhost:${PORT}/__twilio`;
+process.env.TWILIO_ACCOUNT_SID = 'ACtest';
+process.env.TWILIO_AUTH_TOKEN = 'twilio-test-token';
+process.env.TWILIO_FROM = '+3250000000';
+process.env.TWILIO_WHATSAPP_FROM = '+14155238886';
+const TWILIO_LOG = [];
 
 // ---------- in-memory database ----------
 const uuid = () => crypto.randomUUID();
 let nr = 0;
-const DB = { sm_gebouwen: [], sm_aannemers: [], sm_toewijzingen: [], sm_concepten: [], sm_meldingen: [], sm_events: [], sm_instellingen: [] };
+const DB = { sm_gebouwen: [], sm_aannemers: [], sm_toewijzingen: [], sm_concepten: [], sm_meldingen: [], sm_events: [], sm_instellingen: [], sm_oproepen: [] };
 const now = () => new Date().toISOString();
 const DEFAULTS = {
   sm_gebouwen: () => ({ id: uuid(), qr_token: crypto.randomBytes(6).toString('hex'), toegang_info: null, bron_gebouw_id: null, actief: true, created_at: now() }),
@@ -31,12 +38,14 @@ const DEFAULTS = {
     melder_contact_aannemer: false, track_token: crypto.randomBytes(16).toString('hex'), aannemer_id: null, aannemer_token: null,
     verstuurd_op: null, aanvaard_op: null, gepland_op: null, uitgevoerd_op: null, afgesloten_op: null, herinneringen: 0,
     laatste_opvolging: null, escalatie: false, geweigerd_door: [], bevestigingen: 0, opgelost_feedback: null, created_at: now(), updated_at: now(),
-    manueel: false, manueel_uitvoerder: null, manueel_tel: null,
+    manueel: false, manueel_uitvoerder: null, manueel_tel: null, melder_whatsapp: false,
   }),
   sm_events: () => ({ id: ++nr, data: null, created_at: now() }),
+  sm_oproepen: () => ({ id: uuid(), poging: 1, status: 'gestart', toets: null, created_at: now(), updated_at: now() }),
   sm_instellingen: () => ({ id: 1 }),
 };
-DB.sm_instellingen.push({ id: 1, syndicus_naam: 'Syndexia', syndicus_email: 'beheer@syndexia.be', auto_doorsturen_niet_dringend: true, escalatie_dringend_min: 120, herinnering_normaal_uren: 48, dagrapport: true, laatste_dagrapport: null });
+DB.sm_instellingen.push({ id: 1, syndicus_naam: 'Syndexia', syndicus_email: 'beheer@syndexia.be', auto_doorsturen_niet_dringend: true, escalatie_dringend_min: 120, herinnering_normaal_uren: 48, dagrapport: true, laatste_dagrapport: null,
+  noodalarm_actief: false, noodalarm_wanneer: 'buiten_kantooruren', kantoor_van: 8, kantoor_tot: 18, noodalarm_categorieen: ['lift'], syndicus_gsm: null, syndicus_tel: '+32 473 73 72 31' });
 for (const [naam, adres] of [['EOS', 'Gistelse Steenweg 261, 8200 Sint-Andries'], ['Puerto 10', 'Koningin Elisabethlaan 10, 8000 Brugge'], ['Daembaert', 'Oude Burg 4, 8000 Brugge']]) {
   DB.sm_gebouwen.push({ ...DEFAULTS.sm_gebouwen(), naam, adres });
 }
@@ -146,17 +155,28 @@ http.createServer(async (req, res) => {
   try {
     if (p.startsWith('/rest/v1/')) return await rest(req, res, p.slice(9), url.search.slice(1), buf.toString());
     if (p.startsWith('/storage/v1/')) return await storage(req, res, p, buf);
+    if (p.startsWith('/__twilio/')) {
+      const velden = Object.fromEntries(new URLSearchParams(buf.toString()));
+      const soort = p.endsWith('Calls.json') ? 'call' : 'message';
+      const sid = (soort === 'call' ? 'CA' : 'SM') + crypto.randomBytes(8).toString('hex');
+      TWILIO_LOG.push({ soort, sid, ...velden });
+      res.writeHead(201, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ sid }));
+    }
+    if (p === '/__twilio_log') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(TWILIO_LOG)); }
     if (p === '/__db') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(DB)); }
     if (p === '/__mails') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(globalThis.__MAILS || [])); }
     if (p === '/__tijd') { // tijdreizen: verschuif tijdstempels om opvolging te testen
       const min = Number(url.searchParams.get('min') || 0);
       for (const m of DB.sm_meldingen) for (const k of ['verstuurd_op', 'aanvaard_op', 'gepland_op', 'uitgevoerd_op', 'created_at', 'laatste_opvolging']) if (m[k]) m[k] = new Date(new Date(m[k]).getTime() - min * 60000).toISOString();
+      for (const o of DB.sm_oproepen) o.created_at = new Date(new Date(o.created_at).getTime() - min * 60000).toISOString();
       res.writeHead(200); return res.end('ok');
     }
     if (p.startsWith('/api/')) {
       const h = await handler(p.slice(5).replace(/\.js$/, ''));
       req.query = Object.fromEntries(url.searchParams);
-      try { req.body = buf.length ? JSON.parse(buf.toString()) : {}; } catch { req.body = {}; }
+      const ct = req.headers['content-type'] || '';
+      if (ct.includes('application/x-www-form-urlencoded')) req.body = Object.fromEntries(new URLSearchParams(buf.toString()));
+      else { try { req.body = buf.length ? JSON.parse(buf.toString()) : {}; } catch { req.body = {}; } }
       return await h(req, res);
     }
     let file = p === '/' ? '/index.html' : p;

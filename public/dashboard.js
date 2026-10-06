@@ -260,6 +260,7 @@ async function openMelding(id) {
           <dt>Urgentie</dt><dd><select id="urg" style="width:auto;padding:7px 10px"><option value="dringend" ${m.urgentie === 'dringend' ? 'selected' : ''}>Dringend</option><option value="niet_dringend" ${m.urgentie !== 'dringend' ? 'selected' : ''}>Niet dringend</option></select></dd>
           <dt>Melder</dt><dd>${[m.melder_naam, m.melder_appartement && `app. ${m.melder_appartement}`].filter(Boolean).map(esc).join(', ') || '<span class="muted">anoniem</span>'}
             ${m.melder_email ? `<br><a href="mailto:${esc(m.melder_email)}">${esc(m.melder_email)}</a>` : ''}${m.melder_tel ? `<br><a href="tel:${esc(m.melder_tel)}">${esc(m.melder_tel)}</a>` : ''}
+            ${m.melder_whatsapp ? '<br><span class="muted">wil updates via WhatsApp</span>' : ''}
             ${m.bevestigingen ? `<br><span class="muted">+ ${m.bevestigingen} andere bewoner(s) melden hetzelfde</span>` : ''}</dd>
           <dt>Aannemer</dt><dd>${m.manueel ? `<span class="tag s-grijs">zelf afgehandeld</span> ${esc(m.manueel_uitvoerder || '')}${m.manueel_tel ? `<br><a href="tel:${esc(m.manueel_tel)}">${esc(m.manueel_tel)}</a>` : ''}` : m.aannemer ? `${esc(m.aannemer.firma)}${m.aannemer.telefoon ? `<br><a href="tel:${esc(m.aannemer.telefoon)}">${esc(m.aannemer.telefoon)}</a>` : ''}<br><a href="mailto:${esc(m.aannemer.email)}">${esc(m.aannemer.email)}</a>` : '<span class="muted">nog niet toegewezen</span>'}
             <div class="acties" style="margin-top:8px"><select id="andereA">${aOpties(m.aannemer_id)}</select><button class="knop licht klein" data-actie="toewijzen2">${m.aannemer ? 'Andere aannemer' : 'Toewijzen'}</button></div></dd>
@@ -486,6 +487,7 @@ function aannemerLade(a) {
       <div class="veld"><label>Vakgebied</label><select name="vakgebied">${Object.entries(S.data.categorieen).map(([k, c]) => `<option value="${k}" ${a.vakgebied === k ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select></div>
       <div class="veld"><label>E-mail voor opdrachten</label><input type="email" name="email" required value="${esc(a.email)}"></div>
       <div class="veld"><label>Telefoon</label><input type="tel" name="telefoon" value="${esc(a.telefoon || '')}" placeholder="Voor escalaties"></div>
+      <div class="veld vol"><label>24/7-noodnummer</label><input type="tel" name="noodnummer" value="${esc(a.noodnummer || '')}" placeholder="bv. permanentienummer van de liftfirma"><span class="hulp">Dit nummer belt het platform bij een dringende melding buiten de kantooruren (als het noodalarm aan staat). Leeg = gewone telefoon.</span></div>
       <label class="schakel vol"><input type="checkbox" name="actief" ${a.actief ? 'checked' : ''}><span>Actief: kan opdrachten ontvangen</span></label>
       <div class="vol"><button class="knop">${nieuw ? 'Aannemer toevoegen' : 'Wijzigingen bewaren'}</button></div>
     </form>
@@ -508,7 +510,7 @@ function aannemerLade(a) {
     e.preventDefault();
     const f = new FormData(e.target);
     try {
-      await api('aannemer_opslaan', { id: a.id, firma: f.get('firma'), contactpersoon: f.get('contactpersoon'), vakgebied: f.get('vakgebied'), email: f.get('email'), telefoon: f.get('telefoon'), actief: f.get('actief') === 'on' }, 'POST');
+      await api('aannemer_opslaan', { id: a.id, firma: f.get('firma'), contactpersoon: f.get('contactpersoon'), vakgebied: f.get('vakgebied'), email: f.get('email'), telefoon: f.get('telefoon'), noodnummer: f.get('noodnummer'), actief: f.get('actief') === 'on' }, 'POST');
       toast('Aannemer bewaard'); sluitLade(); await laadOverzicht(); viewAannemers();
     } catch (err) { toast(err.message); }
   };
@@ -529,6 +531,20 @@ function viewInstellingen() {
         <div class="veld"><label>Niet-dringend niet aanvaard na (uren)</label><input type="number" name="her" min="4" max="240" value="${i.herinnering_normaal_uren}"><span class="hulp">Zelfde werkwijze voor gewone meldingen.</span></div>
       </div>
       <label class="schakel"><input type="checkbox" name="dag" ${i.dagrapport ? 'checked' : ''}><span><b>Dagrapport om 7 uur</b><br><span class="klein muted">Eén mail met alles wat openstaat en wat uw actie vraagt.</span></span></label>
+      <div style="border-top:1px solid var(--lijn);padding-top:16px;display:flex;flex-direction:column;gap:14px">
+        <div><h3>Telefonisch noodalarm &amp; WhatsApp</h3>
+          <p class="klein muted" style="margin-top:4px">Bij een dringende melding belt het platform de aannemer op zijn noodnummer en leest de melding voor (adres, probleem, contact van de melder). Met toets 1 aanvaardt hij de opdracht. Niet opgenomen: tot 3 pogingen, daarna gaat de opdracht naar de reserve-aannemer. U en de melder (als die dat aanvinkt) krijgen updates via WhatsApp.</p>
+          <p class="klein" style="margin-top:6px">Status: bellen <b>${S.data.telefonie?.bellen ? 'ingesteld' : 'nog niet ingesteld'}</b> · WhatsApp <b>${S.data.telefonie?.whatsapp ? 'ingesteld' : 'nog niet ingesteld'}</b> · nu ${S.data.telefonie?.nuBuitenKantooruren ? 'buiten' : 'binnen'} de kantooruren</p></div>
+        <label class="schakel"><input type="checkbox" name="alarm" ${i.noodalarm_actief ? 'checked' : ''}><span><b>Telefonisch noodalarm aanzetten</b></span></label>
+        <div class="form-grid">
+          <div class="veld"><label>Wanneer bellen?</label><select name="wanneer"><option value="buiten_kantooruren" ${i.noodalarm_wanneer !== 'altijd' ? 'selected' : ''}>Enkel buiten kantooruren, weekends en feestdagen</option><option value="altijd" ${i.noodalarm_wanneer === 'altijd' ? 'selected' : ''}>Altijd bij dringend</option></select></div>
+          <div class="veld"><label>Kantooruren (ma–vr)</label><div style="display:flex;gap:8px;align-items:center"><input type="number" name="van" min="0" max="23" value="${i.kantoor_van ?? 8}" style="width:80px"> tot <input type="number" name="tot" min="1" max="24" value="${i.kantoor_tot ?? 18}" style="width:80px"> uur</div><span class="hulp">Belgische feestdagen tellen automatisch als buiten kantooruren.</span></div>
+          <div class="veld"><label>Gsm syndicus (WhatsApp)</label><input type="tel" name="gsm" value="${esc(i.syndicus_gsm || '')}" placeholder="+32 4.. .. .. .."></div>
+          <div class="veld"><label>Telefoon Syndexia (voorgelezen aan aannemer)</label><input type="tel" name="tel" value="${esc(i.syndicus_tel || '')}"><span class="hulp">Als de melder geen nummer gaf, vraagt de stem de aannemer dit nummer te bellen.</span></div>
+        </div>
+        <div class="veld"><span class="label">Voor welke soorten?</span><div class="chips">${Object.entries(S.data.categorieen).map(([k, c]) => `<label class="chip" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" name="cat" value="${k}" ${(i.noodalarm_categorieen || []).includes(k) ? 'checked' : ''} style="accent-color:var(--bordeaux)">${esc(c.label)}</label>`).join('')}</div></div>
+        <div class="acties"><button type="button" class="knop licht klein" id="testBel">Testoproep naar mijn gsm</button><button type="button" class="knop licht klein" id="testWa">Test-WhatsApp</button></div>
+      </div>
       <div class="acties"><button class="knop">Instellingen bewaren</button><button type="button" class="knop licht" id="testmail">Testmail sturen</button></div>
     </form>
     <form id="pwform" class="blok" style="max-width:680px;margin-top:16px">
@@ -551,7 +567,9 @@ function viewInstellingen() {
   $('#iform').onsubmit = async (e) => {
     e.preventDefault(); const f = new FormData(e.target);
     try {
-      await api('instellingen', { syndicus_naam: f.get('syndicus_naam'), syndicus_email: f.get('syndicus_email'), auto_doorsturen_niet_dringend: f.get('auto') === 'on', escalatie_dringend_min: f.get('esc'), herinnering_normaal_uren: f.get('her'), dagrapport: f.get('dag') === 'on' }, 'POST');
+      await api('instellingen', { syndicus_naam: f.get('syndicus_naam'), syndicus_email: f.get('syndicus_email'), auto_doorsturen_niet_dringend: f.get('auto') === 'on', escalatie_dringend_min: f.get('esc'), herinnering_normaal_uren: f.get('her'), dagrapport: f.get('dag') === 'on',
+        noodalarm_actief: f.get('alarm') === 'on', noodalarm_wanneer: f.get('wanneer'), kantoor_van: f.get('van'), kantoor_tot: f.get('tot'),
+        noodalarm_categorieen: f.getAll('cat'), syndicus_gsm: f.get('gsm'), syndicus_tel: f.get('tel') }, 'POST');
       await laadOverzicht(); toast('Instellingen bewaard');
     } catch (err) { toast(err.message); }
   };
@@ -564,6 +582,8 @@ function viewInstellingen() {
       e.target.reset(); toast('Wachtwoord gewijzigd');
     } catch (err) { toast(err.message); }
   };
+  $('#testBel').onclick = async () => { try { const r = await api('test_oproep', {}, 'POST'); toast(`Testoproep gestart naar ${r.naar}`); } catch (err) { toast(err.message); } };
+  $('#testWa').onclick = async () => { try { await api('test_whatsapp', {}, 'POST'); toast('Test-WhatsApp verstuurd'); } catch (err) { toast(err.message); } };
   $('#testmail').onclick = async () => {
     try { const r = await api('test_mail', {}, 'POST'); toast(r.ok ? `Testmail verstuurd naar ${i.syndicus_email}` : r.fout ? `Mislukt: ${r.fout}` : 'Mail staat nog niet ingesteld'); } catch (err) { toast(err.message); }
   };

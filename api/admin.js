@@ -2,6 +2,7 @@
 import { db, enc, signedUrls } from '../lib/db.js';
 import { doorsturen, event, instellingen, mailBewoner, zelfAfhandelen, manueelPlannen } from '../lib/flow.js';
 import { verstuur, sjabloon } from '../lib/mail.js';
+import { twilioKlaar, whatsappKlaar, bel, whatsapp, naarE164, buitenKantooruren } from '../lib/telefoon.js';
 import { ok, fout, body, siteUrl, maakSessie, wisSessie, heeftSessie, wachtwoordKlopt, hashWachtwoord, token } from '../lib/http.js';
 import { CATEGORIEEN, CATEGORIE_KEYS, STATUS, OPEN_STATUSSEN } from '../lib/constants.js';
 
@@ -54,6 +55,22 @@ export default async function handler(req, res) {
           return ok(res);
         }
         case 'instellingen': return await instellingenOpslaan(b, res);
+        case 'test_oproep': {
+          const inst = await instellingen();
+          if (!twilioKlaar()) return fout(res, 400, 'Twilio is nog niet ingesteld in Vercel (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM).');
+          if (!naarE164(inst.syndicus_gsm)) return fout(res, 400, 'Vul eerst het gsm-nummer van de syndicus in en bewaar.');
+          const r = await bel({ naar: inst.syndicus_gsm, twimlUrl: `${site}/api/telefoon?a=test`, statusUrl: `${site}/api/telefoon?a=status&k=test` });
+          return ok(res, { ok: true, naar: r.to });
+        }
+        case 'test_whatsapp': {
+          const inst = await instellingen();
+          if (!whatsappKlaar()) return fout(res, 400, 'WhatsApp is nog niet ingesteld in Vercel (TWILIO_WHATSAPP_FROM).');
+          if (!naarE164(inst.syndicus_gsm)) return fout(res, 400, 'Vul eerst het gsm-nummer van de syndicus in en bewaar.');
+          const tekst = 'Syndexia: dit is een testbericht van het schademeldingsplatform. WhatsApp-meldingen werken.';
+          const r = await whatsapp({ naar: inst.syndicus_gsm, tekst, sjabloon: process.env.TWILIO_WA_SJABLOON_SYNDICUS, variabelen: { 1: tekst } });
+          if (r.fout) return fout(res, 400, r.fout);
+          return ok(res, { ok: true });
+        }
         case 'test_mail': {
           const inst = await instellingen();
           const r = await verstuur({ to: inst.syndicus_email, subject: 'Testmail schademeldingsplatform', html: sjabloon({ kop: 'Het werkt!', intro: 'Dit is een testmail van het Syndexia-schademeldingsplatform. De mailinstellingen zijn correct.' }) });
@@ -99,6 +116,7 @@ async function overzicht(res) {
     categorieen: CATEGORIEEN, statussen: STATUS,
     mail: process.env.GMAIL_USER ? 'smtp' : process.env.RESEND_API_KEY ? 'resend' : 'uit',
     ai: process.env.ANTHROPIC_API_KEY ? 'aan' : 'uit',
+    telefonie: { bellen: twilioKlaar(), whatsapp: whatsappKlaar(), nuBuitenKantooruren: buitenKantooruren(inst) },
   });
 }
 
@@ -245,7 +263,8 @@ async function toewijzing(b, res) {
 async function aannemerOpslaan(b, res) {
   const rij = {
     firma: tekst(b.firma, 120), contactpersoon: tekst(b.contactpersoon, 120), email: tekst(b.email, 160),
-    telefoon: tekst(b.telefoon, 40), vakgebied: CATEGORIE_KEYS.includes(b.vakgebied) ? b.vakgebied : 'andere', actief: b.actief !== false,
+    telefoon: tekst(b.telefoon, 40), noodnummer: tekst(b.noodnummer, 40),
+    vakgebied: CATEGORIE_KEYS.includes(b.vakgebied) ? b.vakgebied : 'andere', actief: b.actief !== false,
   };
   if (!rij.firma || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(rij.email || '')) return fout(res, 400, 'Firma en een geldig e-mailadres zijn verplicht.');
   const a = uuid(b.id) ? (await db.update('sm_aannemers', `id=eq.${b.id}`, rij))[0] : await db.insert('sm_aannemers', rij);
@@ -273,7 +292,15 @@ async function instellingenOpslaan(b, res) {
     escalatie_dringend_min: Math.min(1440, Math.max(15, Number(b.escalatie_dringend_min) || 120)),
     herinnering_normaal_uren: Math.min(240, Math.max(4, Number(b.herinnering_normaal_uren) || 48)),
     dagrapport: !!b.dagrapport,
+    noodalarm_actief: !!b.noodalarm_actief,
+    noodalarm_wanneer: b.noodalarm_wanneer === 'altijd' ? 'altijd' : 'buiten_kantooruren',
+    kantoor_van: Math.min(23, Math.max(0, Number(b.kantoor_van) || 8)),
+    kantoor_tot: Math.min(24, Math.max(1, Number(b.kantoor_tot) || 18)),
+    noodalarm_categorieen: (Array.isArray(b.noodalarm_categorieen) ? b.noodalarm_categorieen : []).filter((c) => CATEGORIE_KEYS.includes(c)),
+    syndicus_gsm: tekst(b.syndicus_gsm, 40),
+    syndicus_tel: tekst(b.syndicus_tel, 40),
   };
+  if (patch.syndicus_gsm && !naarE164(patch.syndicus_gsm)) return fout(res, 400, 'Het gsm-nummer van de syndicus is ongeldig.');
   const [{ wachtwoord_hash, ...inst }] = await db.update('sm_instellingen', 'id=eq.1', patch);
   return ok(res, { instellingen: inst });
 }

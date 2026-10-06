@@ -44,7 +44,7 @@ export default async function handler(req, res) {
         fotos.push(await uploadFoto(`melding/${m.id}/na-${Date.now()}-${i + 1}.jpg`, buf, mm[1]));
       }
     }
-    const r = await aannemerActie(m, b.actie, { reden: b.reden, datum: b.datum, notitie: b.notitie, fotos }, siteUrl(req));
+    const r = await aannemerActie(m, b.actie, { reden: b.reden, datum: b.datum, notitie: b.notitie, fotos, via: b.actie === 'aanvaard' ? 'via de opdrachtpagina' : null }, siteUrl(req));
     if (r.error) return fout(res, 400, r.error);
     return ok(res, r);
   } catch (e) {
