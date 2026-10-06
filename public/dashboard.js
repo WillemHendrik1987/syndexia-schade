@@ -49,6 +49,12 @@ const catLabel = (k) => S.data?.categorieen?.[k]?.label || k;
 const gebouwNaam = (id) => S.data?.gebouwen.find((g) => g.id === id)?.naam || '—';
 const aannemer = (id) => S.data?.aannemers.find((a) => a.id === id);
 const qrUrl = (t) => `${location.origin}/m/${t}`;
+// standaardvoorstel voor een datum: morgen 9u (lokale tijd), in het formaat van <input type="datetime-local">
+function morgen9u() {
+  const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T09:00`;
+}
 
 // ---------- login ----------
 function toonLogin(fout = '') {
@@ -154,7 +160,7 @@ function tekenLijst() {
       <span class="streep"></span>
       <div class="titel"><b>${esc(m.titel)}</b><span>${esc(m.nummer)} — ${esc(gebouwNaam(m.gebouw_id))}${m.locatie ? `, ${esc(m.locatie)}` : ''}${m.bevestigingen ? ` — ${m.bevestigingen + 1} bewoners` : ''}</span></div>
       <div class="stat">${statusTag(m.status)}${ladder(m.status)}</div>
-      <div class="wie ${a ? '' : 'leeg'}">${a ? esc(a.firma) : m.status === 'wacht_goedkeuring' ? 'wacht op u' : 'geen aannemer'}${m.escalatie ? ' <span class="tag s-oranje">escalatie</span>' : ''}</div>
+      <div class="wie ${a || m.manueel ? '' : 'leeg'}">${m.manueel ? `<span class="tag s-grijs">zelf</span> ${esc(m.manueel_uitvoerder || '')}` : a ? esc(a.firma) : m.status === 'wacht_goedkeuring' ? 'wacht op u' : 'geen aannemer'}${m.escalatie ? ' <span class="tag s-oranje">escalatie</span>' : ''}</div>
       <div class="tijd">${geleden(m.created_at)}</div></div>`;
   }).join('');
   $$('.rij', lijst).forEach((r) => {
@@ -192,12 +198,41 @@ async function openMelding(id) {
 
   // contextuele hoofdactie: wat moet er nu gebeuren?
   let hoofdActie = '';
-  if (m.status === 'wacht_goedkeuring') hoofdActie = `<button class="knop" data-actie="goedkeuren">Goedkeuren en doorsturen</button><button class="knop licht" data-actie="annuleren">Afwijzen</button>`;
-  else if (m.status === 'nieuw') hoofdActie = `<select id="kiesA">${aOpties()}</select><button class="knop" data-actie="toewijzen">Toewijzen en versturen</button>`;
-  else if (m.status === 'wacht_aanvaarding') hoofdActie = `<button class="knop licht" data-actie="opnieuw_versturen">Opdracht opnieuw sturen</button>`;
+  const zelfKnop = '<button class="knop licht" data-actie="zelf_open">Zelf afhandelen</button>';
+  if (m.status === 'wacht_goedkeuring') hoofdActie = `<button class="knop" data-actie="goedkeuren">Goedkeuren en doorsturen</button>${zelfKnop}<button class="knop stil" data-actie="annuleren">Afwijzen</button>`;
+  else if (m.status === 'nieuw') hoofdActie = `<select id="kiesA">${aOpties()}</select><button class="knop" data-actie="toewijzen">Toewijzen en versturen</button>${zelfKnop}`;
+  else if (m.status === 'wacht_aanvaarding') hoofdActie = `<button class="knop licht" data-actie="opnieuw_versturen">Opdracht opnieuw sturen</button>${zelfKnop}`;
+  else if (m.manueel && ['aanvaard', 'ingepland'].includes(m.status)) hoofdActie = `<button class="knop" data-actie="uitgevoerd">Markeer als uitgevoerd</button>`;
   else if (m.status === 'uitgevoerd') hoofdActie = `<button class="knop" data-actie="afsluiten">Afsluiten</button><button class="knop licht" data-actie="heropenen">Heropenen</button>`;
   else if (['afgesloten', 'geannuleerd'].includes(m.status)) hoofdActie = `<button class="knop licht" data-actie="heropenen">Heropenen</button>`;
-  else if (['aanvaard', 'ingepland'].includes(m.status)) hoofdActie = `<button class="knop licht" data-actie="uitgevoerd">Markeer als uitgevoerd</button>`;
+  else if (['aanvaard', 'ingepland'].includes(m.status)) hoofdActie = `<button class="knop licht" data-actie="uitgevoerd">Markeer als uitgevoerd</button>${zelfKnop}`;
+
+  // formulier "Zelf afhandelen" (verborgen tot de knop gebruikt wordt)
+  const zelfForm = `<form class="blok verborgen" id="zelfForm">
+      <div><h3>Zelf afhandelen</h3><p class="klein muted" style="margin-top:4px">U regelt deze herstelling zelf, buiten het aannemerscircuit. De bewoner krijgt gewoon zijn updates (toegewezen, ingepland, uitgevoerd) en de vraag of het opgelost is; naam en telefoon van de uitvoerder blijven intern.</p></div>
+      ${m.aannemer && ['wacht_aanvaarding', 'aanvaard', 'ingepland'].includes(m.status) ? `<div class="melding-fout" style="background:var(--blush);color:var(--wijn)">De opdracht bij <b>${esc(m.aannemer.firma)}</b> wordt ingetrokken; die krijgt daarvan een mail en zijn link vervalt.</div>` : ''}
+      <div class="form-grid">
+        <div class="veld"><label for="zUit">Wie voert het uit?</label><input type="text" id="zUit" required placeholder="bv. Loodgieterij Peeters"></div>
+        <div class="veld"><label for="zTel">Telefoon (optioneel)</label><input type="tel" id="zTel"></div>
+        <div class="veld"><label for="zDatum">Datum interventie (optioneel)</label><input type="datetime-local" id="zDatum"><span class="hulp">Leeg laten als die nog niet vastligt.</span></div>
+        <div class="veld"><label for="zNot">Interne notitie (optioneel)</label><input type="text" id="zNot" placeholder="bv. telefonisch besteld"></div>
+      </div>
+      <div class="acties"><button class="knop">Bevestigen</button><button type="button" class="knop stil" id="zAnnuleer">Annuleren</button></div>
+    </form>`;
+
+  // blok voor meldingen die al manueel lopen: plannen + uitvoerder opslaan als aannemer
+  const manueelBlok = m.manueel && ['aanvaard', 'ingepland'].includes(m.status) ? `<section class="blok">
+      <div><h3>Manuele opvolging</h3><p class="klein" style="margin-top:4px">Uitvoerder: <b>${esc(m.manueel_uitvoerder || '')}</b>${m.manueel_tel ? ` — <a href="tel:${esc(m.manueel_tel)}">${esc(m.manueel_tel)}</a>` : ''}${m.gepland_op ? `<br>Gepland: ${fmt(m.gepland_op)}` : ''}</p></div>
+      <form class="acties" id="mPlan"><input type="datetime-local" id="mDatum" value="${morgen9u()}" style="width:auto"><button class="knop licht klein">${m.gepland_op ? 'Nieuwe datum bewaren' : 'Datum inplannen'}</button></form>
+      <p class="klein muted">De bewoner krijgt een mail met de datum. Is de datum een dag voorbij zonder "uitgevoerd", dan vraagt het platform u of het klaar is.</p>
+      <details class="meer"><summary>Deze vakman voortaan als aannemer gebruiken</summary>
+        <form id="mAannemer" class="form-grid" style="margin-top:10px">
+          <div class="veld"><label for="maFirma">Firma</label><input type="text" id="maFirma" value="${esc(m.manueel_uitvoerder || '')}"></div>
+          <div class="veld"><label for="maMail">E-mail voor opdrachten</label><input type="email" id="maMail" required></div>
+          <label class="schakel vol"><input type="checkbox" id="maKoppel" checked><span>Meteen koppelen aan ${esc(m.gebouw?.naam || 'dit gebouw')} voor ${esc(catLabel(m.categorie))}</span></label>
+          <div class="vol"><button class="knop licht klein">Opslaan als aannemer</button></div>
+        </form></details>
+    </section>` : '';
 
   l.innerHTML = `
     <div class="lade-kop">
@@ -206,6 +241,7 @@ async function openMelding(id) {
       ${hoofdActie ? `<div class="acties">${hoofdActie}</div>` : ''}
     </div>
     <div class="lade-in">
+      ${zelfForm}${manueelBlok}
       ${m.escalatie ? '<div class="melding-fout">Deze opdracht werd geëscaleerd: de aannemer reageerde niet op tijd.</div>' : ''}
       ${ai.noodgeval ? `<div class="nood"><div><b>Noodsituatie gemeld</b>${esc(ai.veiligheidsadvies || '')}</div></div>` : ''}
       <section class="blok">
@@ -225,7 +261,7 @@ async function openMelding(id) {
           <dt>Melder</dt><dd>${[m.melder_naam, m.melder_appartement && `app. ${m.melder_appartement}`].filter(Boolean).map(esc).join(', ') || '<span class="muted">anoniem</span>'}
             ${m.melder_email ? `<br><a href="mailto:${esc(m.melder_email)}">${esc(m.melder_email)}</a>` : ''}${m.melder_tel ? `<br><a href="tel:${esc(m.melder_tel)}">${esc(m.melder_tel)}</a>` : ''}
             ${m.bevestigingen ? `<br><span class="muted">+ ${m.bevestigingen} andere bewoner(s) melden hetzelfde</span>` : ''}</dd>
-          <dt>Aannemer</dt><dd>${m.aannemer ? `${esc(m.aannemer.firma)}${m.aannemer.telefoon ? `<br><a href="tel:${esc(m.aannemer.telefoon)}">${esc(m.aannemer.telefoon)}</a>` : ''}<br><a href="mailto:${esc(m.aannemer.email)}">${esc(m.aannemer.email)}</a>` : '<span class="muted">nog niet toegewezen</span>'}
+          <dt>Aannemer</dt><dd>${m.manueel ? `<span class="tag s-grijs">zelf afgehandeld</span> ${esc(m.manueel_uitvoerder || '')}${m.manueel_tel ? `<br><a href="tel:${esc(m.manueel_tel)}">${esc(m.manueel_tel)}</a>` : ''}` : m.aannemer ? `${esc(m.aannemer.firma)}${m.aannemer.telefoon ? `<br><a href="tel:${esc(m.aannemer.telefoon)}">${esc(m.aannemer.telefoon)}</a>` : ''}<br><a href="mailto:${esc(m.aannemer.email)}">${esc(m.aannemer.email)}</a>` : '<span class="muted">nog niet toegewezen</span>'}
             <div class="acties" style="margin-top:8px"><select id="andereA">${aOpties(m.aannemer_id)}</select><button class="knop licht klein" data-actie="toewijzen2">${m.aannemer ? 'Andere aannemer' : 'Toewijzen'}</button></div></dd>
           <dt>Tijdstippen</dt><dd class="klein">Gemeld ${fmt(m.created_at)}${m.verstuurd_op ? `<br>Verstuurd ${fmt(m.verstuurd_op)}` : ''}${m.aanvaard_op ? `<br>Aanvaard ${fmt(m.aanvaard_op)}` : ''}${m.gepland_op ? `<br>Gepland ${fmt(m.gepland_op)}` : ''}${m.uitgevoerd_op ? `<br>Uitgevoerd ${fmt(m.uitgevoerd_op)}` : ''}</dd>
           <dt>Links</dt><dd class="klein">${m.opdracht_url ? `<a href="${esc(m.opdracht_url)}" target="_blank" rel="noopener">Opdrachtpagina aannemer</a> · ` : ''}<a href="${esc(m.volg_url)}" target="_blank" rel="noopener">Volgpagina bewoner</a></dd>
@@ -253,9 +289,27 @@ async function openMelding(id) {
     const a = b.dataset.actie;
     if (a === 'toewijzen') { const v = $('#kiesA', l).value; if (!v) return toast('Kies eerst een aannemer.'); return doe('toewijzen', { aannemer_id: v }, b); }
     if (a === 'toewijzen2') { const v = $('#andereA', l).value; if (!v) return toast('Kies eerst een aannemer.'); return doe('toewijzen', { aannemer_id: v }, b); }
+    if (a === 'zelf_open') { const f = $('#zelfForm', l); f.classList.remove('verborgen'); f.scrollIntoView({ behavior: 'smooth' }); $('#zUit', l).focus(); return; }
     if (a === 'annuleren' && !confirm('Deze melding annuleren?')) return;
     doe(a, {}, b);
   }));
+  $('#zelfForm', l).onsubmit = (e) => {
+    e.preventDefault();
+    const datum = $('#zDatum', l).value;
+    doe('zelf_afhandelen', { uitvoerder: $('#zUit', l).value, tel: $('#zTel', l).value, datum: datum ? new Date(datum).toISOString() : null, notitie: $('#zNot', l).value }, e.submitter);
+  };
+  $('#zAnnuleer', l).onclick = () => $('#zelfForm', l).classList.add('verborgen');
+  const mPlan = $('#mPlan', l);
+  if (mPlan) mPlan.onsubmit = (e) => { e.preventDefault(); const v = $('#mDatum', l).value; if (!v) return toast('Kies een datum.'); doe('manueel_plannen', { datum: new Date(v).toISOString() }, e.submitter); };
+  const mA = $('#mAannemer', l);
+  if (mA) mA.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const r2 = await api('melding_actie', { id: m.id, actie: 'opslaan_als_aannemer', firma: $('#maFirma', l).value, email: $('#maMail', l).value, tel: m.manueel_tel, koppelen: $('#maKoppel', l).checked }, 'POST');
+      toast(r2.waarschuwing || `Opgeslagen als aannemer${r2.gekoppeld ? ` en gekoppeld als ${r2.gekoppeld}` : ''}`);
+      await laadOverzicht(); openMelding(m.id);
+    } catch (err) { toast(err.message); }
+  };
   $('#cat', l).onchange = (e) => doe('categorie', { waarde: e.target.value });
   $('#urg', l).onchange = (e) => doe('urgentie', { waarde: e.target.value });
   $('#notitie', l).onsubmit = (e) => { e.preventDefault(); const t = e.target.querySelector('input').value.trim(); if (t) doe('notitie', { tekst: t }); };

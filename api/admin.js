@@ -1,6 +1,6 @@
 // Dashboard-API voor de syndicus. Alles behalve "login" vereist een geldig sessiecookie.
 import { db, enc, signedUrls } from '../lib/db.js';
-import { doorsturen, event, instellingen, mailBewoner } from '../lib/flow.js';
+import { doorsturen, event, instellingen, mailBewoner, zelfAfhandelen, manueelPlannen } from '../lib/flow.js';
 import { verstuur, sjabloon } from '../lib/mail.js';
 import { ok, fout, body, siteUrl, maakSessie, wisSessie, heeftSessie, wachtwoordKlopt, hashWachtwoord, token } from '../lib/http.js';
 import { CATEGORIEEN, CATEGORIE_KEYS, STATUS, OPEN_STATUSSEN } from '../lib/constants.js';
@@ -70,7 +70,7 @@ export default async function handler(req, res) {
 
 async function overzicht(res) {
   const [meldingen, gebouwen, aannemers, inst] = await Promise.all([
-    db.select('sm_meldingen', 'select=id,nummer,titel,status,urgentie,categorie,locatie,created_at,updated_at,aanvaard_op,verstuurd_op,uitgevoerd_op,gepland_op,bevestigingen,escalatie,privatief_vermoeden,melder_naam,gebouw_id,aannemer_id,fotos&order=created_at.desc&limit=400'),
+    db.select('sm_meldingen', 'select=id,nummer,titel,status,urgentie,categorie,locatie,created_at,updated_at,aanvaard_op,verstuurd_op,uitgevoerd_op,gepland_op,bevestigingen,escalatie,privatief_vermoeden,melder_naam,gebouw_id,aannemer_id,manueel,manueel_uitvoerder,fotos&order=created_at.desc&limit=400'),
     db.select('sm_gebouwen', 'select=id,naam,adres,actief,qr_token&order=naam.asc'),
     db.select('sm_aannemers', 'select=*&order=firma.asc'),
     instellingen(),
@@ -160,9 +160,42 @@ async function meldingActie(b, site, res) {
       break;
     }
     case 'heropenen': {
-      await db.update('sm_meldingen', `id=eq.${m.id}`, { status: m.aannemer_id ? 'aanvaard' : 'nieuw', afgesloten_op: null, uitgevoerd_op: null });
+      await db.update('sm_meldingen', `id=eq.${m.id}`, { status: m.aannemer_id || m.manueel ? 'aanvaard' : 'nieuw', afgesloten_op: null, uitgevoerd_op: null });
       await event(m.id, 'syndicus', 'heropend', 'Heropend door de syndicus.');
       break;
+    }
+    case 'zelf_afhandelen': {
+      const uitvoerder = tekst(b.uitvoerder, 120);
+      if (!uitvoerder) return fout(res, 400, 'Vul in wie de herstelling uitvoert.');
+      if (['uitgevoerd', 'afgesloten', 'geannuleerd'].includes(m.status)) return fout(res, 400, 'Deze melding is al afgerond.');
+      const r = await zelfAfhandelen(m, { uitvoerder, tel: tekst(b.tel, 40), datum: b.datum || null, notitie: tekst(b.notitie, 500) }, site);
+      if (r.error) return fout(res, 400, r.error);
+      break;
+    }
+    case 'manueel_plannen': {
+      const r = await manueelPlannen(m, b.datum, site);
+      if (r.error) return fout(res, 400, r.error);
+      break;
+    }
+    case 'opslaan_als_aannemer': {
+      // de manuele uitvoerder voortaan als aannemer gebruiken, en optioneel meteen koppelen
+      const email = tekst(b.email, 160);
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email || '')) return fout(res, 400, 'Een geldig e-mailadres is nodig om opdrachten te kunnen sturen.');
+      const a = await db.insert('sm_aannemers', {
+        firma: tekst(b.firma, 120) || m.manueel_uitvoerder || 'Aannemer', email, telefoon: tekst(b.tel, 40) || m.manueel_tel,
+        vakgebied: CATEGORIE_KEYS.includes(m.categorie) ? m.categorie : 'andere',
+      });
+      let gekoppeld = null;
+      if (b.koppelen) {
+        const bestaand = await db.select('sm_toewijzingen', `gebouw_id=eq.${m.gebouw_id}&categorie=eq.${enc(m.categorie)}&select=prioriteit`);
+        const vrij = [1, 2].find((p) => !bestaand.some((t) => t.prioriteit === p));
+        if (vrij) {
+          await db.insert('sm_toewijzingen', { gebouw_id: m.gebouw_id, categorie: m.categorie, prioriteit: vrij, aannemer_id: a.id });
+          gekoppeld = vrij === 1 ? 'vaste aannemer' : 'reserve-aannemer';
+        }
+      }
+      await event(m.id, 'syndicus', 'notitie', `${a.firma} opgeslagen als aannemer${gekoppeld ? ` en gekoppeld als ${gekoppeld} voor ${CATEGORIEEN[m.categorie]?.label || m.categorie}` : ''}.`);
+      return ok(res, { aannemer: a, gekoppeld, waarschuwing: b.koppelen && !gekoppeld ? 'Aannemer opgeslagen. Vaste en reserveplaats voor deze soort zijn al bezet, dus niet automatisch gekoppeld.' : null });
     }
     case 'notitie': {
       const t = tekst(b.tekst, 1500);

@@ -166,5 +166,63 @@ check((await call('/api/admin?a=login', { wachtwoord: 'Brugse-reien-2026' })).st
 d = await db();
 check(/^scrypt\$/.test(d.sm_instellingen[0].wachtwoord_hash) && !d.sm_instellingen[0].wachtwoord_hash.includes('Brugse'), 'opgeslagen als scrypt-hash, niet leesbaar');
 
+// 15. ZELF AFHANDELEN — melding zonder aannemer
+const daem = ov.gebouwen.find((g) => g.naam === 'Daembaert');
+const an5 = await call('/api/public?a=analyse', { t: daem.qr_token, beschrijving: 'Water lekt uit het plafond in de kelder' });
+const ind5 = await call('/api/public?a=indienen', { t: daem.qr_token, concept_id: an5.j.concept_id, melder: { email: 'piet@test.be' } });
+d = await db();
+let m5 = d.sm_meldingen.find((m) => m.nummer === ind5.j.nummer);
+check(m5.status === 'nieuw' && m5.urgentie === 'dringend', 'dringende melding zonder aannemer → nieuw');
+// herinnering aan syndicus als ze blijft liggen
+await fetch(B + '/__tijd?min=125');
+cr = await call('/api/cron?key=cron-dev');
+check(cr.j.log.some((l) => l.includes(m5.nummer) && /herinnering syndicus/.test(l)), 'dringend zonder aannemer → herinnering syndicus na 2u');
+cr = await call('/api/cron?key=cron-dev');
+check(!cr.j.log.some((l) => l.includes(m5.nummer)), 'herinnering maar één keer');
+check((await call('/api/admin?a=melding_actie', { id: m5.id, actie: 'zelf_afhandelen', uitvoerder: '' })).status === 400, 'zelf afhandelen zonder uitvoerder geweigerd');
+let mlVoor = (await mails()).length;
+check((await call('/api/admin?a=melding_actie', { id: m5.id, actie: 'zelf_afhandelen', uitvoerder: 'Loodgieterij Peeters', tel: '0477 11 22 33' })).status === 200, 'zelf afhandelen lukt');
+d = await db(); m5 = d.sm_meldingen.find((m) => m.id === m5.id);
+check(m5.manueel && m5.status === 'aanvaard' && !m5.aannemer_id, 'status aanvaard + manueel, zonder aannemer');
+ml = await mails();
+check(ml.slice(mlVoor).some((x) => x.to.includes('piet@test.be') && /vakman neemt/.test(x.subject)), 'bewoner krijgt "vakman neemt uw melding op"');
+const tr5 = await call(`/api/public?a=volg&k=${m5.track_token}`);
+check(!JSON.stringify(tr5.j).includes('Peeters') && !JSON.stringify(tr5.j).includes('0477'), 'naam/tel uitvoerder NIET zichtbaar voor bewoner');
+const plan5 = new Date(Date.now() + 3600e3).toISOString();
+check((await call('/api/admin?a=melding_actie', { id: m5.id, actie: 'manueel_plannen', datum: plan5 })).status === 200, 'manueel inplannen lukt');
+ml = await mails();
+check(ml.some((x) => x.to.includes('piet@test.be') && /ingepland/.test(x.subject)), 'bewoner krijgt datum');
+// datum verstreken → syndicus krijgt controlevraag (niet een aannemer)
+await fetch(B + '/__tijd?min=' + (26 * 60));
+cr = await call('/api/cron?key=cron-dev');
+check(cr.j.log.some((l) => l.includes(m5.nummer) && /controlevraag/.test(l)), 'na geplande datum: controlevraag aan syndicus');
+check((await mails()).some((x) => /Is .* uitgevoerd\?/.test(x.subject) && x.to.includes('beheer@syndexia.be')), 'controlevraag gaat naar syndicus');
+check((await call('/api/admin?a=melding_actie', { id: m5.id, actie: 'uitgevoerd' })).status === 200, 'manueel als uitgevoerd markeren');
+ml = await mails();
+check(ml.some((x) => x.to.includes('piet@test.be') && /uitgevoerd/.test(x.subject) && x.html.includes('opgelost=ja')), 'bewoner krijgt "opgelost?"-vraag');
+// heropenen blijft manueel
+await call('/api/admin?a=melding_actie', { id: m5.id, actie: 'heropenen' });
+d = await db(); check(d.sm_meldingen.find((m) => m.id === m5.id).status === 'aanvaard', 'heropenen manueel → terug naar aanvaard (niet nieuw)');
+// uitvoerder opslaan als aannemer + koppelen
+const opsl = await call('/api/admin?a=melding_actie', { id: m5.id, actie: 'opslaan_als_aannemer', firma: 'Loodgieterij Peeters', email: 'peeters@test.be', koppelen: true });
+check(opsl.status === 200 && opsl.j.gekoppeld === 'vaste aannemer', 'uitvoerder opgeslagen als aannemer en gekoppeld');
+const an6 = await call('/api/public?a=analyse', { t: daem.qr_token, beschrijving: 'Afvoer in de kelder loopt over, water staat op de vloer' });
+const ind6 = await call('/api/public?a=indienen', { t: daem.qr_token, concept_id: an6.j.concept_id });
+d = await db();
+check(d.sm_meldingen.find((m) => m.nummer === ind6.j.nummer).aannemer_id === opsl.j.aannemer.id, 'volgende melding gaat nu automatisch naar die aannemer');
+
+// 16. zelf overnemen van een aannemer → aannemer krijgt intrekkingsmail, link vervalt
+const m6 = d.sm_meldingen.find((m) => m.nummer === ind6.j.nummer);
+mlVoor = (await mails()).length;
+check((await call('/api/admin?a=melding_actie', { id: m6.id, actie: 'zelf_afhandelen', uitvoerder: 'Eigen klusjesman', datum: new Date(Date.now() + 864e5).toISOString() })).status === 200, 'lopende opdracht zelf overnemen');
+ml = await mails();
+check(ml.slice(mlVoor).some((x) => x.to.includes('peeters@test.be') && /ingetrokken/.test(x.subject)), 'aannemer krijgt mail "opdracht ingetrokken"');
+check((await call(`/api/aannemer?k=${m6.aannemer_token}`)).status === 404, 'zijn opdrachtlink werkt niet meer');
+d = await db(); check(d.sm_meldingen.find((m) => m.id === m6.id).status === 'ingepland', 'met datum → meteen ingepland');
+// terug naar automatisch: toewijzen aan aannemer zet manueel uit
+await call('/api/admin?a=melding_actie', { id: m6.id, actie: 'toewijzen', aannemer_id: opsl.j.aannemer.id });
+d = await db(); const m6b = d.sm_meldingen.find((m) => m.id === m6.id);
+check(!m6b.manueel && m6b.status === 'wacht_aanvaarding', 'terug naar aannemer → manueel uit, wacht op aanvaarding');
+
 console.log(fouten.length ? `\n${fouten.length} FOUT(EN)` : '\nALLES GROEN');
 process.exit(fouten.length ? 1 : 0);

@@ -31,6 +31,7 @@ const DEFAULTS = {
     melder_contact_aannemer: false, track_token: crypto.randomBytes(16).toString('hex'), aannemer_id: null, aannemer_token: null,
     verstuurd_op: null, aanvaard_op: null, gepland_op: null, uitgevoerd_op: null, afgesloten_op: null, herinneringen: 0,
     laatste_opvolging: null, escalatie: false, geweigerd_door: [], bevestigingen: 0, opgelost_feedback: null, created_at: now(), updated_at: now(),
+    manueel: false, manueel_uitvoerder: null, manueel_tel: null,
   }),
   sm_events: () => ({ id: ++nr, data: null, created_at: now() }),
   sm_instellingen: () => ({ id: 1 }),

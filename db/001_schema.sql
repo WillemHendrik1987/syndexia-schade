@@ -138,3 +138,9 @@ where g.actief and not exists (select 1 from public.sm_gebouwen s where s.bron_g
 
 -- v1.1: wachtwoord van het dashboard (scrypt-hash), wijzigbaar via Instellingen
 alter table public.sm_instellingen add column if not exists wachtwoord_hash text;
+
+-- v1.2: modus "Zelf afhandelen" (manueel buiten het aannemerscircuit)
+alter table public.sm_meldingen
+  add column if not exists manueel boolean not null default false,
+  add column if not exists manueel_uitvoerder text,
+  add column if not exists manueel_tel text;
