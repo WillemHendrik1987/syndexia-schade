@@ -74,7 +74,7 @@ function teken() {
       <section class="blok"><h2 style="font-size:1.2rem">Herstelling klaar?</h2>
         <div class="veld"><label for="verslag">Kort verslag (optioneel)</label><textarea id="verslag" style="min-height:80px" placeholder="Wat werd er gedaan? Zijn er vervolgwerken nodig?"></textarea></div>
         <div class="veld"><span class="label">Foto's na de herstelling (optioneel)</span><div class="fotos" id="naFotos"></div>
-          <label class="knop licht klein fotoknop" style="align-self:flex-start">Foto toevoegen<input type="file" accept="image/*" multiple hidden id="naInput"></label></div>
+          <div class="acties" style="display:flex;gap:8px;flex-wrap:wrap"><label class="knop licht klein fotoknop">Foto nemen<input type="file" accept="image/*" capture="environment" hidden class="naInput"></label><label class="knop licht klein fotoknop">Uit album<input type="file" accept="image/*" multiple hidden class="naInput"></label></div></div>
         <button class="knop breed groot" id="klaar">Herstelling is uitgevoerd</button></section>`;
   } else {
     actie = `<section class="gedaan"><div class="ladder groot"><i class="aan"></i><i class="aan"></i><i class="aan"></i><i class="aan"></i><i class="aan"></i></div>
@@ -105,8 +105,7 @@ function teken() {
   on('weiger', async (e) => { e.target.disabled = true; try { await post('weiger', { reden: $('#reden').value }); $('#app').innerHTML = '<section class="gedaan"><h2>Bedankt voor uw snelle reactie</h2><p class="muted">Syndexia schakelt een andere vakman in.</p></section>'; } catch (err) { toast(err.message); e.target.disabled = false; } });
   on('plan', async (e) => { const v = $('#datum').value; if (!v) return toast('Kies een datum.'); e.target.disabled = true; try { await post('plan', { datum: new Date(v).toISOString(), notitie: $('#planNotitie').value }); toast('Ingepland. De bewoners worden verwittigd.'); await laad(); } catch (err) { toast(err.message); e.target.disabled = false; } });
   on('klaar', async (e) => { e.target.disabled = true; e.target.textContent = 'Bezig…'; try { await post('uitgevoerd', { notitie: $('#verslag').value, fotos: naFotos }); naFotos = []; toast('Bedankt! Gemeld als uitgevoerd.'); await laad(); } catch (err) { toast(err.message); e.target.disabled = false; } });
-  const inp = document.getElementById('naInput');
-  if (inp) inp.onchange = async (e) => { for (const f of [...e.target.files].slice(0, 3 - naFotos.length)) naFotos.push(await verklein(f)); $('#naFotos').innerHTML = naFotos.map((u) => `<img src="${u}" alt="">`).join(''); };
+  document.querySelectorAll('.naInput').forEach((inp) => inp.onchange = async (e) => { for (const f of [...e.target.files].slice(0, 3 - naFotos.length)) naFotos.push(await verklein(f)); $('#naFotos').innerHTML = naFotos.map((u) => `<img src="${u}" alt="">`).join(''); e.target.value = ''; });
 }
 
 async function laad() {

@@ -26,7 +26,7 @@
   .fotoknop { aspect-ratio: 1; border: 1.5px dashed var(--blush-2); border-radius: var(--r-m); background: var(--kaart); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; cursor: pointer; color: var(--bordeaux); font-weight: 600; font-size: .82rem; text-align: center; padding: 6px; }
   .fotoknop:hover { border-color: var(--bordeaux); }
   .fotoknop svg { width: 26px; height: 26px; }
-  .fotoveld.leeg { grid-template-columns: 1fr; }
+  .fotoveld.leeg { grid-template-columns: 1fr 1fr; }
   .fotoveld.leeg .fotoknop { aspect-ratio: auto; padding: 26px 16px; flex-direction: row; gap: 12px; font-size: 1rem; }
 
   /* het ene geanimeerde moment: de AI "leest" de melding */
@@ -132,7 +132,11 @@ function stap1(foutTekst = '') {
     <div class="veld">
       <span class="label">Foto's <span class="muted klein">(max. 4)</span></span>
       <div class="fotoveld ${staat.fotos.length ? '' : 'leeg'}" id="fotoveld"></div>
-      <input type="file" id="fotoInput" accept="image/*" multiple hidden>
+      <!-- Twee aparte invoervelden: "capture" opent rechtstreeks de camera,
+           zonder capture + "multiple" opent de galerij. Eén veld voor beide
+           laat sommige Android-browsers enkel de galerij tonen. -->
+      <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden>
+      <input type="file" id="albumInput" accept="image/*" multiple hidden>
     </div>
     <div class="veld">
       <label for="beschrijving">Wat ziet u?</label>
@@ -146,13 +150,15 @@ function stap1(foutTekst = '') {
     <button class="knop breed groot" id="volgende">Melding laten analyseren</button>`;
 
   tekenFotos();
-  $('#fotoInput').onchange = async (e) => {
+  const fotoKeuze = async (e) => {
     for (const f of [...e.target.files].slice(0, 4 - staat.fotos.length)) {
       try { staat.fotos.push(await verklein(f)); } catch (err) { toast(err.message); }
     }
     e.target.value = '';
     tekenFotos();
   };
+  $('#cameraInput').onchange = fotoKeuze;
+  $('#albumInput').onchange = fotoKeuze;
   $('#beschrijving').oninput = (e) => (staat.beschrijving = e.target.value);
   $('#verdieping').oninput = (e) => (staat.verdieping = e.target.value);
   $('#plaatsen').onclick = (e) => {
@@ -168,11 +174,13 @@ function tekenFotos() {
   const veld = $('#fotoveld');
   veld.className = `fotoveld ${staat.fotos.length ? '' : 'leeg'}`;
   const camera = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/></svg>';
+  const album = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>';
+  const nog = staat.fotos.length < 4;
   veld.innerHTML = staat.fotos.map((f, i) => `<div class="fototegel"><img src="${f}" alt="Foto ${i + 1}"><button type="button" aria-label="Foto ${i + 1} verwijderen" data-weg="${i}">×</button></div>`).join('')
-    + (staat.fotos.length < 4 ? `<label class="fotoknop" for="fotoInput" tabindex="0">${camera}<span>${staat.fotos.length ? 'Nog een foto' : 'Foto nemen of kiezen'}</span></label>` : '');
+    + (nog ? `<label class="fotoknop" for="cameraInput" tabindex="0" data-input="cameraInput">${camera}<span>Foto nemen</span></label>
+              <label class="fotoknop" for="albumInput" tabindex="0" data-input="albumInput">${album}<span>Uit album</span></label>` : '');
   veld.querySelectorAll('[data-weg]').forEach((b) => (b.onclick = () => { staat.fotos.splice(+b.dataset.weg, 1); tekenFotos(); }));
-  const lbl = veld.querySelector('.fotoknop');
-  if (lbl) lbl.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#fotoInput').click(); } };
+  veld.querySelectorAll('.fotoknop').forEach((lbl) => (lbl.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); document.getElementById(lbl.dataset.input).click(); } }));
 }
 
 // ---------- stap 2: AI-analyse ----------
