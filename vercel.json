@@ -1,9 +1,9 @@
 {
   "cleanUrls": true,
   "rewrites": [
-    { "source": "/m/:token", "destination": "/melden.html" },
-    { "source": "/t/:token", "destination": "/volg.html" },
-    { "source": "/a/:token", "destination": "/opdracht.html" }
+    { "source": "/m/:token", "destination": "/melden" },
+    { "source": "/t/:token", "destination": "/volg" },
+    { "source": "/a/:token", "destination": "/opdracht" }
   ],
   "functions": {
     "api/public.js": { "maxDuration": 60 },
