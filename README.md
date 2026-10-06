@@ -29,7 +29,7 @@ Schademeldingsplatform voor Syndexia: bewoners melden schade via een QR-code in 
 
 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `DASHBOARD_PASSWORD`, `SESSION_SECRET`, `CRON_SECRET`, `SITE_URL`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `MAIL_FROM`. Optioneel: `ANTHROPIC_MODEL`, of `RESEND_API_KEY` in plaats van Gmail.
 
-Telefonisch noodalarm & WhatsApp (optioneel, Twilio): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` (Belgisch nummer in +32-formaat) en `TWILIO_WHATSAPP_FROM` (bv. `whatsapp:+14155238886` voor de sandbox). Optioneel: `TWILIO_WA_SJABLOON_SYNDICUS` / `TWILIO_WA_SJABLOON_MELDER` (goedgekeurde WhatsApp-sjablonen, ContentSid `HX…`, één variabele `{{1}}`), `TWILIO_VOICE` (standaard `Polly.Lotte`) en `TWILIO_LANGUAGE` (standaard `nl-NL`). Zonder deze variabelen blijft alles werken zoals voorheen: enkel mail.
+Telefonisch noodalarm & WhatsApp (optioneel, Twilio): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` (Belgisch nummer in +32-formaat) en `TWILIO_WHATSAPP_FROM` (bv. `whatsapp:+14155238886` voor de sandbox). Optioneel: `TWILIO_WA_SJABLOON_SYNDICUS` / `TWILIO_WA_SJABLOON_MELDER` (goedgekeurde WhatsApp-sjablonen, ContentSid `HX…`, één variabele `{{1}}`), `TWILIO_VOICE` (standaard `Polly.Lisa-Neural`, Vlaamse stem; alternatief `Google.nl-BE-Wavenet-D` voor een mannenstem) en `TWILIO_LANGUAGE` (standaard `nl-BE`). Zonder deze variabelen blijft alles werken zoals voorheen: enkel mail.
 
 ## Beveiliging
 
