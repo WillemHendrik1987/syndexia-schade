@@ -414,7 +414,7 @@ function viewAannemers() {
     <button class="knop" id="nieuwA">Aannemer toevoegen</button></div>
     <div class="lijst">${lijst.length ? lijst.map((a) => `<div class="aannemer-rij ${a.actief ? '' : 'inactief'}" data-id="${a.id}" tabindex="0" role="button">
       <div><b>${esc(a.firma)}</b><div class="klein muted">${esc(a.contactpersoon || '')}</div></div>
-      <div class="klein">${esc(catLabel(a.vakgebied))}</div>
+      <div class="klein">${esc(catLabel(a.vakgebied))}${a.lopend ? `<br><span class="muted">${a.lopend} lopend</span>` : ''}</div>
       <div class="klein">${esc(a.email)}${a.telefoon ? `<br>${esc(a.telefoon)}` : ''}</div>
       <div style="text-align:right">${a.actief ? '<span class="knop licht klein">Bewerken</span>' : '<span class="tag s-grijs">inactief</span>'}</div></div>`).join('')
       : '<div class="leeg-staat"><h3>Nog geen aannemers</h3><p>Voeg uw liftbedrijf, loodgieter, elektricien en een algemene klusjesdienst toe.</p></div>'}</div>`;
@@ -435,7 +435,21 @@ function aannemerLade(a) {
       <label class="schakel vol"><input type="checkbox" name="actief" ${a.actief ? 'checked' : ''}><span>Actief: kan opdrachten ontvangen</span></label>
       <div class="vol"><button class="knop">${nieuw ? 'Aannemer toevoegen' : 'Wijzigingen bewaren'}</button></div>
     </form>
-    <p class="klein muted">De aannemer heeft geen account nodig. Elke opdracht komt per mail met een persoonlijke link om te aanvaarden, in te plannen en af te melden.</p></div>`);
+    <p class="klein muted">De aannemer heeft geen account nodig. Elke opdracht komt per mail met een persoonlijke link om te aanvaarden, in te plannen en af te melden.</p>
+    ${nieuw ? '' : `<section class="blok"><h3>Aannemer verwijderen</h3>
+      ${a.lopend
+        ? `<p class="klein">Deze aannemer heeft nog <b>${a.lopend} lopende opdracht(en)</b>. Wijs die eerst aan iemand anders toe via Meldingen, daarna kan u hem verwijderen.</p>`
+        : `<p class="klein muted">${a.koppelingen ? `De ${a.koppelingen} koppeling(en) aan gebouwen verdwijnen mee. ` : ''}Afgeronde meldingen blijven bewaard. Wilt u hem enkel tijdelijk niet gebruiken? Vink dan "Actief" uit.</p>
+           <div><button type="button" class="knop gevaar" id="verwijderA">Aannemer verwijderen</button></div>`}
+    </section>`}</div>`);
+  const vk = $('#verwijderA', l);
+  if (vk) vk.onclick = async () => {
+    if (!confirm(`${a.firma} definitief verwijderen?`)) return;
+    try {
+      await api('aannemer_verwijderen', { id: a.id }, 'POST');
+      toast('Aannemer verwijderd'); sluitLade(); await laadOverzicht(); viewAannemers();
+    } catch (err) { toast(err.message); }
+  };
   $('#aform', l).onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -463,6 +477,15 @@ function viewInstellingen() {
       <label class="schakel"><input type="checkbox" name="dag" ${i.dagrapport ? 'checked' : ''}><span><b>Dagrapport om 7 uur</b><br><span class="klein muted">Eén mail met alles wat openstaat en wat uw actie vraagt.</span></span></label>
       <div class="acties"><button class="knop">Instellingen bewaren</button><button type="button" class="knop licht" id="testmail">Testmail sturen</button></div>
     </form>
+    <form id="pwform" class="blok" style="max-width:680px;margin-top:16px">
+      <div><h3>Wachtwoord wijzigen</h3><p class="klein muted" style="margin-top:4px">Na het wijzigen worden alle andere toestellen automatisch uitgelogd.</p></div>
+      <div class="form-grid">
+        <div class="veld vol"><label for="pwHuidig">Huidig wachtwoord</label><input type="password" id="pwHuidig" autocomplete="current-password" required></div>
+        <div class="veld"><label for="pwNieuw">Nieuw wachtwoord</label><input type="password" id="pwNieuw" autocomplete="new-password" minlength="10" required><span class="hulp">Minstens 10 tekens. Een zin van enkele woorden is sterk en makkelijk te onthouden.</span></div>
+        <div class="veld"><label for="pwHerhaal">Herhaal nieuw wachtwoord</label><input type="password" id="pwHerhaal" autocomplete="new-password" required></div>
+      </div>
+      <div><button class="knop">Wachtwoord wijzigen</button></div>
+    </form>
     <section class="blok" style="max-width:680px;margin-top:16px"><h3>Hoe het platform zelf opvolgt</h3>
       <ol class="tijdlijn">
         <li><div>Bewoner scant de QR-code, neemt een foto en beschrijft het probleem. De assistent vat samen, kiest de soort en beslist of het dringend is.</div></li>
@@ -476,6 +499,15 @@ function viewInstellingen() {
     try {
       await api('instellingen', { syndicus_naam: f.get('syndicus_naam'), syndicus_email: f.get('syndicus_email'), auto_doorsturen_niet_dringend: f.get('auto') === 'on', escalatie_dringend_min: f.get('esc'), herinnering_normaal_uren: f.get('her'), dagrapport: f.get('dag') === 'on' }, 'POST');
       await laadOverzicht(); toast('Instellingen bewaard');
+    } catch (err) { toast(err.message); }
+  };
+  $('#pwform').onsubmit = async (e) => {
+    e.preventDefault();
+    const nieuw = $('#pwNieuw').value;
+    if (nieuw !== $('#pwHerhaal').value) return toast('De twee nieuwe wachtwoorden zijn niet gelijk.');
+    try {
+      await api('wachtwoord', { huidig: $('#pwHuidig').value, nieuw }, 'POST');
+      e.target.reset(); toast('Wachtwoord gewijzigd');
     } catch (err) { toast(err.message); }
   };
   $('#testmail').onclick = async () => {

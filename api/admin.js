@@ -2,7 +2,7 @@
 import { db, enc, signedUrls } from '../lib/db.js';
 import { doorsturen, event, instellingen, mailBewoner } from '../lib/flow.js';
 import { verstuur, sjabloon } from '../lib/mail.js';
-import { ok, fout, body, siteUrl, maakSessie, wisSessie, heeftSessie, wachtwoordKlopt, token } from '../lib/http.js';
+import { ok, fout, body, siteUrl, maakSessie, wisSessie, heeftSessie, wachtwoordKlopt, hashWachtwoord, token } from '../lib/http.js';
 import { CATEGORIEEN, CATEGORIE_KEYS, STATUS, OPEN_STATUSSEN } from '../lib/constants.js';
 
 const uuid = (v) => /^[0-9a-f-]{36}$/i.test(String(v || ''));
@@ -11,14 +11,16 @@ const tekst = (v, n = 300) => (v == null ? null : String(v).trim().slice(0, n) |
 export default async function handler(req, res) {
   const a = req.query.a;
   try {
+    // huidige wachtwoord-hash (null zolang het wachtwoord nooit in het dashboard gewijzigd werd)
+    const hash = (await db.one('sm_instellingen', 'id=eq.1&select=wachtwoord_hash'))?.wachtwoord_hash || null;
     if (a === 'login' && req.method === 'POST') {
       await new Promise((r) => setTimeout(r, 400)); // vertraagt het raden van wachtwoorden
-      if (!wachtwoordKlopt(body(req).wachtwoord)) return fout(res, 401, 'Onjuist wachtwoord.');
-      maakSessie(res);
+      if (!wachtwoordKlopt(body(req).wachtwoord, hash)) return fout(res, 401, 'Onjuist wachtwoord.');
+      maakSessie(res, hash);
       return ok(res);
     }
     if (a === 'logout') { wisSessie(res); return ok(res); }
-    if (!heeftSessie(req)) return fout(res, 401, 'Niet ingelogd.');
+    if (!heeftSessie(req, hash)) return fout(res, 401, 'Niet ingelogd.');
     if (a === 'me') return ok(res, { ok: true });
 
     if (req.method === 'GET') {
@@ -39,6 +41,18 @@ export default async function handler(req, res) {
         }
         case 'toewijzing': return await toewijzing(b, res);
         case 'aannemer_opslaan': return await aannemerOpslaan(b, res);
+        case 'aannemer_verwijderen': return await aannemerVerwijderen(b, res);
+        case 'wachtwoord': {
+          await new Promise((r) => setTimeout(r, 400));
+          if (!wachtwoordKlopt(b.huidig, hash)) return fout(res, 400, 'Het huidige wachtwoord klopt niet.');
+          const nieuw = String(b.nieuw || '');
+          if (nieuw.length < 10) return fout(res, 400, 'Kies een wachtwoord van minstens 10 tekens.');
+          if (nieuw === String(b.huidig)) return fout(res, 400, 'Het nieuwe wachtwoord is hetzelfde als het huidige.');
+          const nieuweHash = hashWachtwoord(nieuw);
+          await db.update('sm_instellingen', 'id=eq.1', { wachtwoord_hash: nieuweHash });
+          maakSessie(res, nieuweHash); // dit toestel blijft ingelogd, alle andere worden uitgelogd
+          return ok(res);
+        }
         case 'instellingen': return await instellingenOpslaan(b, res);
         case 'test_mail': {
           const inst = await instellingen();
@@ -61,6 +75,11 @@ async function overzicht(res) {
     db.select('sm_aannemers', 'select=*&order=firma.asc'),
     instellingen(),
   ]);
+  const toew = await db.select('sm_toewijzingen', 'select=aannemer_id,gebouw_id');
+  const lopend = {}, koppelingen = {};
+  meldingen.filter((m) => ['wacht_aanvaarding', 'aanvaard', 'ingepland'].includes(m.status) && m.aannemer_id)
+    .forEach((m) => (lopend[m.aannemer_id] = (lopend[m.aannemer_id] || 0) + 1));
+  toew.forEach((t) => (koppelingen[t.aannemer_id] = (koppelingen[t.aannemer_id] || 0) + 1));
   // Kerncijfers: hoeveel open, hoeveel dringend open, wat vraagt actie, gemiddelde reactietijd aannemer
   const open = meldingen.filter((m) => OPEN_STATUSSEN.includes(m.status));
   const reactie = meldingen.filter((m) => m.aanvaard_op && m.verstuurd_op)
@@ -75,7 +94,8 @@ async function overzicht(res) {
   };
   return ok(res, {
     kpi, meldingen: meldingen.map(({ fotos, ...m }) => ({ ...m, aantal_fotos: fotos?.length || 0 })),
-    gebouwen, aannemers, instellingen: inst,
+    gebouwen, aannemers: aannemers.map((x) => ({ ...x, lopend: lopend[x.id] || 0, koppelingen: koppelingen[x.id] || 0 })),
+    instellingen: (({ wachtwoord_hash, ...rest }) => rest)(inst), // de hash gaat nooit naar de browser
     categorieen: CATEGORIEEN, statussen: STATUS,
     mail: process.env.GMAIL_USER ? 'smtp' : process.env.RESEND_API_KEY ? 'resend' : 'uit',
     ai: process.env.ANTHROPIC_API_KEY ? 'aan' : 'uit',
@@ -199,6 +219,19 @@ async function aannemerOpslaan(b, res) {
   return ok(res, { aannemer: a });
 }
 
+// Verwijderen kan enkel als de aannemer geen lopende opdrachten meer heeft.
+// Zijn koppelingen aan gebouwen verdwijnen mee (on delete cascade); afgeronde meldingen
+// blijven bestaan (aannemer_id wordt leeg) en de firmanaam blijft in hun tijdlijn staan.
+async function aannemerVerwijderen(b, res) {
+  if (!uuid(b.id)) return fout(res, 400, 'Ongeldige aannemer');
+  const lopend = await db.select('sm_meldingen', `aannemer_id=eq.${b.id}&status=in.(wacht_aanvaarding,aanvaard,ingepland)&select=nummer`);
+  if (lopend.length) {
+    return fout(res, 409, `Deze aannemer heeft nog ${lopend.length} lopende opdracht(en): ${lopend.map((m) => m.nummer).join(', ')}. Wijs die eerst aan iemand anders toe.`);
+  }
+  await db.remove('sm_aannemers', `id=eq.${b.id}`);
+  return ok(res);
+}
+
 async function instellingenOpslaan(b, res) {
   const patch = {
     syndicus_naam: tekst(b.syndicus_naam, 120) || 'Syndexia',
@@ -208,6 +241,6 @@ async function instellingenOpslaan(b, res) {
     herinnering_normaal_uren: Math.min(240, Math.max(4, Number(b.herinnering_normaal_uren) || 48)),
     dagrapport: !!b.dagrapport,
   };
-  const [inst] = await db.update('sm_instellingen', 'id=eq.1', patch);
+  const [{ wachtwoord_hash, ...inst }] = await db.update('sm_instellingen', 'id=eq.1', patch);
   return ok(res, { instellingen: inst });
 }

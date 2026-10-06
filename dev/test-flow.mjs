@@ -141,5 +141,30 @@ check(!('ip_hash' in det.j.melding), 'ip-hash niet naar dashboard gestuurd');
 const ov2 = (await call('/api/admin?a=overzicht')).j;
 check(ov2.kpi.open >= 4, `KPI open = ${ov2.kpi.open}, dringend = ${ov2.kpi.dringend}, actie = ${ov2.kpi.actie}, reactietijd = ${ov2.kpi.reactie_min}`);
 
+// 13. aannemer verwijderen: geblokkeerd bij lopende opdrachten, anders weg incl. koppelingen
+const metLopend = (await call('/api/admin?a=aannemer_verwijderen', { id: lift2.id }));
+check(metLopend.status === 409 && /lopende/.test(metLopend.j.error), 'verwijderen geblokkeerd bij lopende opdracht');
+const losse = (await call('/api/admin?a=aannemer_opslaan', { firma: 'Weg BV', email: 'weg@test.be', vakgebied: 'glas_ramen' })).j.aannemer;
+await call('/api/admin?a=toewijzing', { gebouw_id: eos.id, categorie: 'glas_ramen', prioriteit: 1, aannemer_id: losse.id });
+check((await call('/api/admin?a=aannemer_verwijderen', { id: losse.id })).status === 200, 'aannemer zonder lopende opdrachten verwijderd');
+d = await db();
+check(!d.sm_aannemers.some((a) => a.id === losse.id) && !d.sm_toewijzingen.some((t) => t.aannemer_id === losse.id), 'aannemer + koppelingen weg');
+const ov3 = (await call('/api/admin?a=overzicht')).j;
+check(!('wachtwoord_hash' in ov3.instellingen), 'wachtwoord-hash gaat niet naar de browser');
+
+// 14. wachtwoord wijzigen
+check((await call('/api/admin?a=wachtwoord', { huidig: 'fout', nieuw: 'nieuwwachtwoord1' })).status === 400, 'fout huidig wachtwoord geweigerd');
+check((await call('/api/admin?a=wachtwoord', { huidig: 'test123', nieuw: 'kort' })).status === 400, 'te kort nieuw wachtwoord geweigerd');
+const oudCookie = cookie;
+check((await call('/api/admin?a=wachtwoord', { huidig: 'test123', nieuw: 'Brugse-reien-2026' })).status === 200, 'wachtwoord gewijzigd');
+check((await call('/api/admin?a=overzicht')).status === 200, 'dit toestel blijft ingelogd');
+const nieuwCookie = cookie; cookie = oudCookie;
+check((await call('/api/admin?a=overzicht')).status === 401, 'oude sessies (andere toestellen) zijn uitgelogd');
+cookie = '';
+check((await call('/api/admin?a=login', { wachtwoord: 'test123' })).status === 401, 'oud wachtwoord werkt niet meer');
+check((await call('/api/admin?a=login', { wachtwoord: 'Brugse-reien-2026' })).status === 200, 'nieuw wachtwoord werkt');
+d = await db();
+check(/^scrypt\$/.test(d.sm_instellingen[0].wachtwoord_hash) && !d.sm_instellingen[0].wachtwoord_hash.includes('Brugse'), 'opgeslagen als scrypt-hash, niet leesbaar');
+
 console.log(fouten.length ? `\n${fouten.length} FOUT(EN)` : '\nALLES GROEN');
 process.exit(fouten.length ? 1 : 0);

@@ -101,7 +101,15 @@ async function rest(req, res, table, qs, bodyTxt) {
     rows.forEach((r) => Object.assign(r, patch, table === 'sm_meldingen' ? { updated_at: now() } : {}));
     return send(200, rows);
   }
-  if (req.method === 'DELETE') { DB[table] = t.filter((r) => !matches(r, filters)); return send(204); }
+  if (req.method === 'DELETE') {
+    const weg = t.filter((r) => matches(r, filters)).map((r) => r.id);
+    DB[table] = t.filter((r) => !matches(r, filters));
+    if (table === 'sm_aannemers') { // zoals de echte foreign keys: cascade + set null
+      DB.sm_toewijzingen = DB.sm_toewijzingen.filter((x) => !weg.includes(x.aannemer_id));
+      DB.sm_meldingen.forEach((m) => { if (weg.includes(m.aannemer_id)) m.aannemer_id = null; });
+    }
+    return send(204);
+  }
 }
 const STORE = new Map();
 async function storage(req, res, p, bodyBuf) {

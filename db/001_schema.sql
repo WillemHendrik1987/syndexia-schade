@@ -135,3 +135,6 @@ on conflict (id) do nothing;
 insert into public.sm_gebouwen (naam, adres, bron_gebouw_id)
 select g.naam, g.adres, g.id from public.gebouwen g
 where g.actief and not exists (select 1 from public.sm_gebouwen s where s.bron_gebouw_id = g.id);
+
+-- v1.1: wachtwoord van het dashboard (scrypt-hash), wijzigbaar via Instellingen
+alter table public.sm_instellingen add column if not exists wachtwoord_hash text;
