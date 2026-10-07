@@ -94,7 +94,7 @@ check(d.sm_meldingen[0].status === 'aanvaard', 'melding heropend naar aannemer')
 
 // 8. weigering → automatisch naar reserve
 const an2 = await call('/api/public?a=analyse', { t: 'testeos12345', beschrijving: 'Liftdeur sluit heel traag', locatie: 'Lift' });
-const ind2 = await call('/api/public?a=indienen', { t: 'testeos12345', concept_id: an2.j.concept_id });
+const ind2 = await call('/api/public?a=indienen', { t: 'testeos12345', concept_id: an2.j.concept_id, ander_probleem: true });
 d = await db();
 const m2 = d.sm_meldingen.find((m) => m.nummer === ind2.j.nummer);
 check(m2.aannemer_id === lift.id, 'tweede liftmelding naar vaste liftfirma');
@@ -207,7 +207,7 @@ d = await db(); check(d.sm_meldingen.find((m) => m.id === m5.id).status === 'aan
 const opsl = await call('/api/admin?a=melding_actie', { id: m5.id, actie: 'opslaan_als_aannemer', firma: 'Loodgieterij Peeters', email: 'peeters@test.be', koppelen: true });
 check(opsl.status === 200 && opsl.j.gekoppeld === 'vaste aannemer', 'uitvoerder opgeslagen als aannemer en gekoppeld');
 const an6 = await call('/api/public?a=analyse', { t: daem.qr_token, beschrijving: 'Afvoer in de kelder loopt over, water staat op de vloer' });
-const ind6 = await call('/api/public?a=indienen', { t: daem.qr_token, concept_id: an6.j.concept_id });
+const ind6 = await call('/api/public?a=indienen', { t: daem.qr_token, concept_id: an6.j.concept_id, ander_probleem: true });
 d = await db();
 check(d.sm_meldingen.find((m) => m.nummer === ind6.j.nummer).aannemer_id === opsl.j.aannemer.id, 'volgende melding gaat nu automatisch naar die aannemer');
 
@@ -307,8 +307,53 @@ check((await twilioPost(`/api/telefoon?a=twiml&k=${m7.aannemer_token}`, {})).xml
 await call('/api/admin?a=instellingen', { syndicus_email: 'beheer@syndexia.be', noodalarm_actief: true, noodalarm_wanneer: 'altijd', noodalarm_categorieen: [], syndicus_gsm: '0470000001', dagrapport: true, auto_doorsturen_niet_dringend: true });
 twVoor = (await tw()).length;
 const an8 = await call('/api/public?a=analyse', { t: puerto.qr_token, beschrijving: 'Lift staat stil, buiten dienst' });
-await call('/api/public?a=indienen', { t: puerto.qr_token, concept_id: an8.j.concept_id });
+await call('/api/public?a=indienen', { t: puerto.qr_token, concept_id: an8.j.concept_id, ander_probleem: true });
 check(!(await tw()).slice(twVoor).some((x) => x.soort === 'call'), 'categorie niet aangevinkt → niet gebeld (enkel mail)');
+
+// 18. dubbele meldingen voorkomen
+console.log('\n— dubbele meldingen —');
+// a) bij het scannen ziet de bewoner de lopende meldingen, met fase en zonder naam van de melder
+const scan = (await call('/api/public?a=gebouw&t=testeos12345')).j;
+const lopendLift = scan.open.find((m) => m.categorie === 'Lift');
+check(scan.open.length >= 2 && !!lopendLift && lopendLift.fase >= 1 && typeof lopendLift.tekst === 'string', `scan toont lopende meldingen met fase (“${lopendLift?.tekst}”)`);
+check(!JSON.stringify(scan).includes('Jan') && !JSON.stringify(scan).includes('jan@test.be'), 'scanpagina toont geen naam of e-mail van melders');
+// b) volgpagina toont de naam van de melder niet meer (wordt gedeeld met meevolgers)
+check(!JSON.stringify((await call(`/api/public?a=volg&k=${m1.track_token}`)).j).includes('door Jan'), 'volgpagina verbergt de naam van de melder');
+// c) AI ziet dubbel → indienen zonder bevestiging wordt geweigerd (409), er komt geen nieuwe opdracht
+d = await db();
+const voorAantal = d.sm_meldingen.length;
+const opdrVoor = (await mails()).filter((x) => /opdracht/i.test(x.subject)).length;
+const dupAn = await call('/api/public?a=analyse', { t: 'testeos12345', beschrijving: 'De lift werkt weer niet, hij reageert niet op de knop', locatie: 'Lift' });
+check(!!dupAn.j.ai.duplicaat_van, 'AI (reserve) herkent dubbele liftmelding');
+const dupInd = await call('/api/public?a=indienen', { t: 'testeos12345', concept_id: dupAn.j.concept_id });
+check(dupInd.status === 409 && !!dupInd.j.dubbel?.titel, `indienen van dubbel zonder bevestiging → 409 (“${dupInd.j?.error?.slice(0, 50)}…”)`);
+d = await db();
+check(d.sm_meldingen.length === voorAantal && (await mails()).filter((x) => /opdracht/i.test(x.subject)).length === opdrVoor, 'geen nieuwe melding en geen tweede opdracht naar de vakman');
+// d) bewoner zegt "iets anders" → wel aangemaakt, met notitie voor de syndicus
+const ander = await call('/api/public?a=indienen', { t: 'testeos12345', concept_id: dupAn.j.concept_id, ander_probleem: true });
+d = await db();
+const mAnder = d.sm_meldingen.find((m) => m.nummer === ander.j?.nummer);
+check(ander.status === 200 && d.sm_events.some((e) => e.melding_id === mAnder?.id && e.type === 'dubbel_check'), '"iets anders" → melding aangemaakt + notitie "mogelijk dubbel" in dashboard');
+// e) "dit is ook mijn probleem" met e-mail → volger krijgt welkomstmail én latere updates
+const doel = d.sm_meldingen.find((m) => m.id === m2.id);
+const bevVoor = doel.bevestigingen;
+const mlVolg = (await mails()).length;
+const bv = await call('/api/public?a=bevestig', { t: 'testeos12345', melding_id: doel.id, email: 'Buur@Test.be', opmerking: 'Ook bij ons' });
+check(bv.status === 200 && bv.j.volgt === true, 'bevestigen met e-mail → volgt mee');
+check((await mails()).slice(mlVolg).some((x) => x.to.includes('buur@test.be') && /U volgt deze melding/.test(x.subject)), 'volger krijgt welkomstmail');
+await call('/api/public?a=bevestig', { t: 'testeos12345', melding_id: doel.id }); // zelfde toestel nog eens
+d = await db();
+check(d.sm_meldingen.find((m) => m.id === doel.id).bevestigingen === bevVoor + 1, 'zelfde toestel telt maar één keer mee');
+const mlUpd = (await mails()).length;
+const doelNu = d.sm_meldingen.find((m) => m.id === doel.id);
+if (doelNu.status === 'wacht_aanvaarding') await call('/api/aannemer', { k: doelNu.aannemer_token, actie: 'aanvaard' });
+await call('/api/aannemer', { k: doelNu.aannemer_token, actie: 'plan', datum: new Date(Date.now() + 864e5).toISOString() });
+check((await mails()).slice(mlUpd).some((x) => x.to.includes('buur@test.be') && /ingepland/.test(x.subject)), 'volger krijgt update "ingepland"');
+const detVolg = (await call(`/api/admin?a=melding&id=${doel.id}`)).j;
+check(detVolg.melding.volgers?.includes('buur@test.be'), 'dashboard toont de volger');
+// f) gepland → fase 3 met datum op het scanscherm
+const scan2 = (await call('/api/public?a=gebouw&t=testeos12345')).j.open.find((m) => m.id === doel.id);
+check(scan2?.fase === 3 && !!scan2.gepland_op, 'scanscherm toont "Herstelling gepland" met datum');
 
 console.log(fouten.length ? `\n${fouten.length} FOUT(EN)` : '\nALLES GROEN');
 process.exit(fouten.length ? 1 : 0);

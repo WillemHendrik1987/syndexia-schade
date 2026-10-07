@@ -26,7 +26,7 @@ const TWILIO_LOG = [];
 // ---------- in-memory database ----------
 const uuid = () => crypto.randomUUID();
 let nr = 0;
-const DB = { sm_gebouwen: [], sm_aannemers: [], sm_toewijzingen: [], sm_concepten: [], sm_meldingen: [], sm_events: [], sm_instellingen: [], sm_oproepen: [] };
+const DB = { sm_gebouwen: [], sm_aannemers: [], sm_toewijzingen: [], sm_concepten: [], sm_meldingen: [], sm_events: [], sm_instellingen: [], sm_oproepen: [], sm_bevestigingen: [] };
 const now = () => new Date().toISOString();
 const DEFAULTS = {
   sm_gebouwen: () => ({ id: uuid(), qr_token: crypto.randomBytes(6).toString('hex'), toegang_info: null, bron_gebouw_id: null, actief: true, created_at: now() }),
@@ -43,6 +43,7 @@ const DEFAULTS = {
   sm_events: () => ({ id: ++nr, data: null, created_at: now() }),
   sm_oproepen: () => ({ id: uuid(), poging: 1, status: 'gestart', toets: null, created_at: now(), updated_at: now() }),
   sm_instellingen: () => ({ id: 1 }),
+  sm_bevestigingen: () => ({ id: uuid(), email: null, opmerking: null, created_at: now() }),
 };
 DB.sm_instellingen.push({ id: 1, syndicus_naam: 'Syndexia', syndicus_email: 'beheer@syndexia.be', auto_doorsturen_niet_dringend: true, escalatie_dringend_min: 120, herinnering_normaal_uren: 48, dagrapport: true, laatste_dagrapport: null,
   noodalarm_actief: false, noodalarm_wanneer: 'buiten_kantooruren', kantoor_van: 8, kantoor_tot: 18, noodalarm_categorieen: ['lift'], syndicus_gsm: null, syndicus_tel: '+32 473 73 72 31' });
@@ -79,6 +80,7 @@ function matches(row, filters) {
     if (op === 'gte') return v != null && v >= decodeURIComponent(raw);
     if (op === 'lt') return v != null && v < decodeURIComponent(raw);
     if (op === 'is') return v === parseVal(raw);
+    if (op === 'not') { const [op2, raw2] = [raw.slice(0, raw.indexOf('.')), raw.slice(raw.indexOf('.') + 1)]; if (op2 === 'is') return v !== parseVal(raw2); }
     throw new Error('op ' + op);
   });
 }

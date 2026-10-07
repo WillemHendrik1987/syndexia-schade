@@ -11,13 +11,20 @@
   .intro h1 { font-size: 1.85rem; }
   .intro p { margin-top: 6px; color: var(--ink-2); }
 
-  .gemeld summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-weight: 600; }
-  .gemeld summary::-webkit-details-marker { display: none; }
-  .gemeld summary .aantal { background: var(--blush); color: var(--wijn); border-radius: 999px; padding: 2px 10px; font-size: .85rem; }
-  .gemeld ul { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-direction: column; gap: 10px; }
-  .gemeld li { border-top: 1px solid var(--lijn); padding-top: 10px; display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
-  .gemeld li b { display: block; font-weight: 600; }
-  .gemeld li span { font-size: .85rem; color: var(--ink-2); }
+  /* eerste scherm: wat is er al gemeld? */
+  .lopend { display: flex; flex-direction: column; gap: 12px; }
+  .lopend-kaart { background: var(--kaart); border: 1px solid var(--lijn); border-radius: var(--r-l, 16px); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .lopend-kaart .boven { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+  .lopend-kaart h3 { font-size: 1.12rem; line-height: 1.3; }
+  .lopend-kaart .waar { font-size: .88rem; color: var(--ink-2); }
+  .fase { display: flex; flex-direction: column; gap: 6px; }
+  .fase .balk { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .fase .balk i { height: 6px; border-radius: 3px; background: var(--blush-2); }
+  .fase .balk i.aan { background: var(--bordeaux); }
+  .fase .wat { font-size: .9rem; font-weight: 600; color: var(--wijn); }
+  .fase .wat span { font-weight: 400; color: var(--ink-2); }
+  .terugnaar { background: none; border: 0; color: var(--bordeaux); font-weight: 600; padding: 0; cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 3px; }
+  .of { text-align: center; color: var(--ink-2); font-size: .9rem; margin-top: 4px; }
 
   .fotoveld { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
   .fototegel { aspect-ratio: 1; border-radius: var(--r-m); overflow: hidden; position: relative; background: var(--blush); }
@@ -84,7 +91,7 @@ const raster = (n = 18) => Array.from({ length: n }, (_, i) => `<i style="animat
 $('#laadRaster').innerHTML = raster();
 
 const PLAATSEN = ['Inkomhal', 'Trappenhal', 'Lift', 'Kelder of garage', 'Gang of overloop', 'Dak of gevel', 'Tuin of buiten', 'Fietsenberging', 'Andere'];
-const staat = { gebouw: null, open: [], fotos: [], beschrijving: '', plaats: '', verdieping: '', concept: null, ai: null };
+const staat = { gebouw: null, open: [], fotos: [], beschrijving: '', plaats: '', verdieping: '', concept: null, ai: null, anderProbleem: false };
 
 async function api(actie, data, methode = 'POST') {
   const url = `/api/public?a=${actie}` + (methode === 'GET' ? `&${new URLSearchParams(data)}` : '');
@@ -115,19 +122,49 @@ function ladder(stap) { // 4 stappen: melden, analyse, controleren, verstuurd
   return `<div class="ladder groot" aria-label="Stap ${stap} van 4">${[1, 2, 3, 4].map((i) => `<i class="${i < stap ? 'aan' : i === stap ? 'nu' : ''}"></i>`).join('')}</div>`;
 }
 
+function wanneer(iso) {
+  const d = new Date(iso), nu = new Date();
+  const dagen = Math.floor((new Date(nu.toDateString()) - new Date(d.toDateString())) / 864e5);
+  const uur = d.toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' });
+  if (dagen <= 0) return `vandaag om ${uur}`;
+  if (dagen === 1) return `gisteren om ${uur}`;
+  if (dagen < 7) return `${dagen} dagen geleden`;
+  return `op ${d.toLocaleDateString('nl-BE', { day: 'numeric', month: 'long' })}`;
+}
+
+// ---------- stap 0: is het probleem al gemeld? ----------
+// Verschijnt meteen na het scannen als er iets openstaat. Zo ziet de bewoner eerst wat
+// al in behandeling is, en kan hij met één tik bevestigen in plaats van opnieuw te melden.
+function lopendScherm() {
+  const open = staat.open;
+  app.innerHTML = `
+    <div class="intro"><h1>Is uw probleem al gemeld?</h1>
+      <p>${open.length === 1 ? 'Dit probleem is' : 'Deze problemen zijn'} al gemeld en ${open.length === 1 ? 'wordt' : 'worden'} opgevolgd. Staat het uwe ertussen? Dan hoeft u niets opnieuw te melden.</p></div>
+    <div class="lopend">${open.map((m) => `
+      <article class="lopend-kaart">
+        <div class="boven"><div><h3>${esc(m.titel)}</h3><div class="waar">${esc([...new Set([m.locatie, m.categorie].filter(Boolean))].join(' · '))}</div></div>
+          ${m.dringend ? '<span class="tag dringend">Dringend</span>' : ''}</div>
+        <div class="fase" aria-label="Voortgang: ${esc(m.tekst)}">
+          <div class="balk">${[1, 2, 3, 4].map((i) => `<i class="${i <= m.fase ? 'aan' : ''}"></i>`).join('')}</div>
+          <div class="wat">${esc(m.tekst)}${m.gepland_op ? ` <span>op ${esc(new Date(m.gepland_op).toLocaleString('nl-BE', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }))}</span>` : ''}</div>
+          <div class="klein muted">Gemeld ${esc(wanneer(m.sinds))}${m.bevestigingen ? ` · ${m.bevestigingen + 1} bewoners merken dit` : ''}</div>
+        </div>
+        <button class="knop breed" data-bevestig="${m.id}">Dit is ook mijn probleem</button>
+      </article>`).join('')}
+    </div>
+    <p class="of">of</p>
+    <button class="knop licht breed groot" id="nieuw">Mijn probleem staat er niet bij</button>`;
+  app.querySelectorAll('[data-bevestig]').forEach((b) => (b.onclick = () => bevestigScherm(b.dataset.bevestig)));
+  $('#nieuw').onclick = () => { stap1(); window.scrollTo({ top: 0 }); };
+}
+
 // ---------- stap 1: wat en waar ----------
 function stap1(foutTekst = '') {
   const open = staat.open;
   app.innerHTML = `
     ${ladder(1)}
     <div class="intro"><h1>Wat is er stuk of beschadigd?</h1><p>Neem een foto en beschrijf kort wat u ziet. Onze assistent zorgt dat de juiste vakman verwittigd wordt.</p></div>
-    ${open.length ? `
-    <details class="blok gemeld" ${open.length <= 3 ? 'open' : ''}>
-      <summary>Al gemeld in dit gebouw <span class="aantal">${open.length}</span></summary>
-      <p class="klein muted" style="margin-top:8px">Staat uw probleem hieronder? Laat ons weten dat u het ook merkt, dan hoeft u niets opnieuw te melden.</p>
-      <ul>${open.map((m) => `<li><div><b>${esc(m.titel)}</b><span>${esc(m.locatie || m.categorie || '')} — ${esc(m.status)}${m.bevestigingen ? `, ${m.bevestigingen + 1} bewoners` : ''}</span></div>
-        <button class="knop licht klein" data-bevestig="${m.id}">Ik merk dit ook</button></li>`).join('')}</ul>
-    </details>` : ''}
+    ${open.length ? `<p class="klein"><button class="terugnaar" id="naarLopend">← Toch al gemeld? Bekijk de ${open.length} lopende melding${open.length === 1 ? '' : 'en'}</button></p>` : ''}
     ${foutTekst ? `<div class="melding-fout">${esc(foutTekst)}</div>` : ''}
     <div class="veld">
       <span class="label">Foto's <span class="muted klein">(max. 4)</span></span>
@@ -166,7 +203,7 @@ function stap1(foutTekst = '') {
     staat.plaats = staat.plaats === b.textContent ? '' : b.textContent;
     [...$('#plaatsen').children].forEach((c) => c.setAttribute('aria-pressed', c.textContent === staat.plaats));
   };
-  app.querySelectorAll('[data-bevestig]').forEach((b) => (b.onclick = () => bevestigScherm(b.dataset.bevestig)));
+  if (open.length) $('#naarLopend').onclick = lopendScherm;
   $('#volgende').onclick = analyse;
 }
 
@@ -232,7 +269,7 @@ function overzicht(foutTekst = '') {
     ${ai.noodgeval || ai.veiligheidsadvies ? `<div class="nood" role="alert"><div><b>Eerst dit</b>${esc(ai.veiligheidsadvies || 'Bel 112 bij gevaar voor personen.')}<br><a href="tel:112">Bel 112</a></div></div>` : ''}
     ${dup ? `<div class="blok"><h2 style="font-size:1.2rem">Dit lijkt al gemeld</h2>
       <p>“${esc(dup.titel)}” staat al open (${esc(dup.status.toLowerCase())}). Wilt u laten weten dat u het ook merkt, in plaats van een nieuwe melding te maken?</p>
-      <div class="chips"><button class="knop klein" id="dupJa">Ja, ik merk dit ook</button><button class="knop licht klein" id="dupNee">Nee, het is iets anders</button></div></div>` : ''}
+      <div class="chips"><button class="knop klein" id="dupJa">Ja, dit is hetzelfde</button><button class="knop licht klein" id="dupNee">Nee, het is iets anders</button></div></div>` : ''}
     <section class="blok analyse">
       <div class="kop"><h2>${esc(ai.titel)}</h2>${ai.dringend ? '<span class="tag dringend">Dringend</span>' : '<span class="tag normaal">Niet dringend</span>'}</div>
       <p>${esc(ai.samenvatting)}</p>
@@ -255,18 +292,20 @@ function overzicht(foutTekst = '') {
       <label class="vink"><input type="checkbox" id="whatsapp"><span>Stuur mij updates via WhatsApp (op het telefoonnummer hierboven).</span></label>
       <p class="klein muted">We gebruiken uw gegevens enkel voor de opvolging van deze melding.</p>
     </section>
-    <button class="knop breed groot" id="verstuur">Melding versturen</button>
+    <button class="knop breed groot" id="verstuur" ${dup ? 'hidden' : ''}>Melding versturen</button>
     <button class="knop stil" id="terug">Terug en aanpassen</button>`;
+  // Lijkt het een dubbel, dan kan de bewoner pas versturen nadat hij zegt dat het iets anders is.
+  // (De server controleert dit ook, zodat een vakman nooit twee opdrachten krijgt voor hetzelfde.)
   if (dup) {
     $('#dupJa').onclick = () => bevestigScherm(dup.id);
-    $('#dupNee').onclick = (e) => e.target.closest('.blok').remove();
+    $('#dupNee').onclick = (e) => { staat.anderProbleem = true; e.target.closest('.blok').remove(); $('#verstuur').hidden = false; $('#verstuur').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
   }
   $('#terug').onclick = () => stap1();
   $('#verstuur').onclick = async (e) => {
     e.target.disabled = true; e.target.textContent = 'Bezig met versturen…';
     try {
       const r = await api('indienen', {
-        concept_id: staat.concept, aanvulling: $('#aanvulling').value,
+        concept_id: staat.concept, aanvulling: $('#aanvulling').value, ander_probleem: !!staat.anderProbleem,
         melder: { naam: $('#naam').value, appartement: $('#appNr').value, email: $('#email').value, tel: $('#tel').value, contact_aannemer: $('#contactAannemer').checked, whatsapp: $('#whatsapp').checked },
       });
       klaarScherm(r, !!$('#email').value.trim());
@@ -293,17 +332,25 @@ function klaarScherm(r, metMail) {
 function bevestigScherm(id) {
   const m = staat.open.find((x) => x.id === id);
   app.innerHTML = `${ladder(3)}
-    <div class="intro"><h1>U merkt dit ook</h1><p>We voegen uw bevestiging toe aan de bestaande melding. Zo weet de syndicus dat meerdere bewoners last hebben.</p></div>
-    <section class="blok"><h2 style="font-size:1.2rem">${esc(m?.titel || '')}</h2><p class="muted klein">${esc(m?.status || '')}</p></section>
+    <div class="intro"><h1>U merkt dit ook</h1><p>We voegen uw bevestiging toe aan de bestaande melding. Zo weet Syndexia dat meerdere bewoners last hebben, en krijgt de vakman geen dubbele opdracht.</p></div>
+    <section class="blok"><h2 style="font-size:1.2rem">${esc(m?.titel || '')}</h2><p class="muted klein">${esc(m?.tekst || m?.status || '')}</p></section>
     <div class="veld"><label for="opm">Wilt u iets toevoegen?</label><textarea id="opm" style="min-height:70px" placeholder="Optioneel, bv. ‘Ook op de 4e verdieping’"></textarea></div>
+    <section class="blok">
+      <div><h2 style="font-size:1.2rem">Mee op de hoogte blijven?</h2><p class="klein muted" style="margin-top:4px">Optioneel. Dan krijgt u dezelfde updates als de eerste melder: wanneer de vakman komt en wanneer het hersteld is.</p></div>
+      <div class="veld"><label for="bevMail">E-mail</label><input type="email" id="bevMail" autocomplete="email" inputmode="email"></div>
+      <p class="klein muted">We gebruiken uw e-mailadres enkel voor de opvolging van deze melding.</p>
+    </section>
     <button class="knop breed groot" id="ok">Bevestigen</button>
     <button class="knop stil" id="terug">Terug</button>`;
-  $('#terug').onclick = () => stap1();
+  $('#terug').onclick = () => (staat.ai ? overzicht() : staat.open.length ? lopendScherm() : stap1());
   $('#ok').onclick = async (e) => {
+    const email = $('#bevMail').value.trim();
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Dit e-mailadres lijkt niet te kloppen.');
     e.target.disabled = true;
     try {
-      const r = await api('bevestig', { melding_id: id, opmerking: $('#opm').value, concept_id: staat.concept });
-      app.innerHTML = `${ladder(4)}<div class="intro"><h1>Bedankt</h1><p>Uw bevestiging is toegevoegd aan melding ${esc(r.nummer)}.</p></div><a class="knop breed groot" href="${esc(r.volg)}">Bekijk de status</a>`;
+      const r = await api('bevestig', { melding_id: id, opmerking: $('#opm').value, email, concept_id: staat.concept });
+      app.innerHTML = `${ladder(4)}<div class="intro"><h1>Bedankt</h1><p>Uw bevestiging is toegevoegd aan melding ${esc(r.nummer)}.${r.volgt ? ' U krijgt een mail bij elke stap.' : ''}</p></div><a class="knop breed groot" href="${esc(r.volg)}">Bekijk de status</a>`;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) { toast(err.message); e.target.disabled = false; }
   };
 }
@@ -321,7 +368,7 @@ function toast(t) {
     $('#gebouwNaam').textContent = r.gebouw.naam;
     $('#gebouwAdres').textContent = r.gebouw.adres || '';
     document.title = `Schade melden – ${r.gebouw.naam}`;
-    stap1();
+    if (staat.open.length) lopendScherm(); else stap1();
   } catch (e) {
     app.innerHTML = `<div class="intro"><h1>Deze code werkt niet</h1><p>${esc(e.message)} Neem contact op met Syndexia via <a href="tel:+32473737231">+32 473 73 72 31</a> of <a href="mailto:beheer@syndexia.be">beheer@syndexia.be</a>.</p></div>`;
   }

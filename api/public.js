@@ -3,7 +3,7 @@ import { db, enc, uploadFoto, signedUrls } from '../lib/db.js';
 import { analyseer } from '../lib/ai.js';
 import { verwerkNieuweMelding, event, mailBewoner, mailSyndicus } from '../lib/flow.js';
 import { verstuur, sjabloon } from '../lib/mail.js';
-import { ok, fout, body, siteUrl, ipHash } from '../lib/http.js';
+import { ok, fout, send, body, siteUrl, ipHash } from '../lib/http.js';
 import { CATEGORIEEN, STATUS, OPEN_STATUSSEN } from '../lib/constants.js';
 
 const MAX_FOTO_BYTES = 3.5 * 1024 * 1024;
@@ -32,7 +32,15 @@ async function gebouwVanToken(t) {
 
 async function openMeldingen(gebouwId) {
   return db.select('sm_meldingen',
-    `gebouw_id=eq.${gebouwId}&status=in.(${OPEN_STATUSSEN.join(',')})&select=id,titel,categorie,locatie,status,urgentie,created_at,bevestigingen&order=created_at.desc&limit=15`);
+    `gebouw_id=eq.${gebouwId}&status=in.(${OPEN_STATUSSEN.join(',')})&select=id,titel,categorie,locatie,status,urgentie,created_at,bevestigingen,gepland_op,manueel&order=created_at.desc&limit=15`);
+}
+
+// Waar staat een lopende melding? In bewonerstaal, met een fase 1–3 voor het balkje.
+function fase(m) {
+  if (m.status === 'ingepland') return { fase: 3, tekst: 'Herstelling gepland' };
+  if (m.status === 'aanvaard') return { fase: 2, tekst: m.manueel ? 'Syndexia regelt de herstelling' : 'Een vakman neemt het op' };
+  if (m.status === 'wacht_aanvaarding') return { fase: 2, tekst: 'Vakman verwittigd' };
+  return { fase: 1, tekst: 'Gemeld, wordt bekeken door Syndexia' };
 }
 
 async function gebouwInfo(req, res) {
@@ -41,7 +49,8 @@ async function gebouwInfo(req, res) {
   const open = (await openMeldingen(g.id)).map((m) => ({
     id: m.id, titel: m.titel, categorie: CATEGORIEEN[m.categorie]?.label, locatie: m.locatie,
     status: STATUS[m.status]?.label, dringend: m.urgentie === 'dringend', sinds: m.created_at, bevestigingen: m.bevestigingen,
-  }));
+    gepland_op: m.status === 'ingepland' ? m.gepland_op : null, ...fase(m),
+  })).sort((a, b) => b.dringend - a.dringend); // dringende eerst (stabiel: verder nieuwste eerst)
   return ok(res, { gebouw: { naam: g.naam, adres: g.adres }, open });
 }
 
@@ -119,6 +128,16 @@ async function indienen(req, res) {
   const ip = ipHash(req);
   if (await teVeel(ip, 'sm_meldingen', 6)) return fout(res, 429, 'U deed al veel meldingen dit uur. Bel Syndexia bij nood.');
 
+  // Dubbele meldingen tegenhouden: ziet de AI dat dit al gemeld is, dan moet de bewoner
+  // uitdrukkelijk bevestigen dat het om iets anders gaat. Zo stuurt de tool de vakman
+  // geen tweede opdracht voor hetzelfde defect. (Server-side, dus niet te omzeilen.)
+  const dubbel = c.ai.duplicaat_van
+    ? await db.one('sm_meldingen', `id=eq.${enc(c.ai.duplicaat_van)}&gebouw_id=eq.${g.id}&status=in.(${OPEN_STATUSSEN.join(',')})&select=id,nummer,titel`)
+    : null;
+  if (dubbel && !b.ander_probleem) {
+    return send(res, 409, { error: `Dit lijkt al gemeld als “${dubbel.titel}”. Bevestig dat u het ook merkt, of geef aan dat het om iets anders gaat.`, dubbel: { id: dubbel.id, titel: dubbel.titel } });
+  }
+
   const melder = b.melder || {};
   const email = String(melder.email || '').trim().slice(0, 160);
   const aanvulling = String(b.aanvulling || '').trim().slice(0, 1000);
@@ -142,27 +161,42 @@ async function indienen(req, res) {
   await event(m.id, 'ai', 'analyse', `Ingedeeld als ${CATEGORIEEN[ai.categorie]?.label} – ${ai.urgentie === 'dringend' ? 'DRINGEND' : 'niet dringend'}. ${ai.urgentie_reden || ''}`,
     { vertrouwen: ai.vertrouwen, bron: ai.bron, privatief: ai.privatief_vermoeden });
 
+  if (dubbel) await event(m.id, 'bewoner', 'dubbel_check', `Mogelijk dubbel van ${dubbel.nummer} (“${dubbel.titel}”), maar de bewoner geeft aan dat het om een ander probleem gaat.`);
+
   const site = siteUrl(req);
   await verwerkNieuweMelding(m.id, site);
   await mailBewoner(m, site, 'ontvangen');
   return ok(res, { nummer: m.nummer, volg: `${site}/t/${m.track_token}`, dringend: m.urgentie === 'dringend' });
 }
 
-// "Ik merk dit ook" – een bewoner bevestigt een bestaande melding i.p.v. een dubbele aan te maken
+// "Ik merk dit ook" – een bewoner bevestigt een bestaande melding i.p.v. een dubbele aan te maken.
+// Optioneel laat hij een e-mailadres na: dan volgt hij mee en krijgt hij dezelfde updates als de melder.
 async function bevestig(req, res) {
   const b = body(req);
   const g = await gebouwVanToken(b.t);
   if (!g) return fout(res, 404, 'Ongeldige QR-code.');
-  const m = await db.one('sm_meldingen', `id=eq.${enc(b.melding_id || '')}&gebouw_id=eq.${g.id}&select=id,nummer,track_token,bevestigingen,status`);
+  const ip = ipHash(req);
+  if (await teVeel(ip, 'sm_bevestigingen', 20)) return fout(res, 429, 'Te veel bevestigingen vanaf dit toestel. Probeer later opnieuw.');
+  const m = await db.one('sm_meldingen', `id=eq.${enc(b.melding_id || '')}&gebouw_id=eq.${g.id}&select=id,nummer,titel,track_token,bevestigingen,status`);
   if (!m || !OPEN_STATUSSEN.includes(m.status)) return fout(res, 404, 'Deze melding staat niet meer open.');
-  await db.update('sm_meldingen', `id=eq.${m.id}`, { bevestigingen: (m.bevestigingen || 0) + 1 });
+
   const extra = String(b.opmerking || '').trim().slice(0, 500);
+  const ruw = String(b.email || '').trim().slice(0, 160);
+  const email = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ruw) ? ruw.toLowerCase() : null;
+  // Eén toestel telt maar één keer mee: zo blijft "3 bewoners" ook echt 3 bewoners.
+  const alGeteld = await db.one('sm_bevestigingen', `melding_id=eq.${m.id}&ip_hash=eq.${ip}&select=id`);
+  await db.insert('sm_bevestigingen', { melding_id: m.id, ip_hash: ip, email, opmerking: extra || null });
+  if (!alGeteld) await db.update('sm_meldingen', `id=eq.${m.id}`, { bevestigingen: (m.bevestigingen || 0) + 1 });
   await event(m.id, 'bewoner', 'bevestiging', `Nog een bewoner meldt hetzelfde probleem.${extra ? ` “${extra}”` : ''}`);
   if (b.concept_id) await db.remove('sm_concepten', `id=eq.${enc(b.concept_id)}&gebouw_id=eq.${g.id}`);
-  return ok(res, { nummer: m.nummer, volg: `${siteUrl(req)}/t/${m.track_token}` });
+  const site = siteUrl(req);
+  if (email) await mailBewoner(m, site, 'volgen', email);
+  return ok(res, { nummer: m.nummer, volg: `${site}/t/${m.track_token}`, volgt: !!email });
 }
 
 const PUBLIEKE_EVENTS = ['aangemaakt', 'analyse', 'doorgestuurd', 'aanvaard', 'ingepland', 'uitgevoerd', 'afgesloten', 'heropend', 'bevestiging', 'goedgekeurd'];
+
+const PUBLIEKE_TEKST = { doorgestuurd: 'Opdracht doorgegeven aan een vakman.', aangemaakt: 'Melding ingediend via de QR-code.' };
 
 async function volg(req, res) {
   const k = String(req.query.k || '');
@@ -175,7 +209,8 @@ async function volg(req, res) {
     dringend: m.urgentie === 'dringend', categorie: CATEGORIEEN[m.categorie]?.label, locatie: m.locatie,
     gebouw: m.gebouw?.naam, aannemer: m.aannemer?.firma || null, created_at: m.created_at, gepland_op: m.gepland_op,
     uitgevoerd_op: m.uitgevoerd_op, feedback: m.opgelost_feedback, fotos: await signedUrls(m.fotos, 3600),
-    tijdlijn: ev.map((e) => ({ type: e.type, tekst: e.type === 'doorgestuurd' ? 'Opdracht doorgegeven aan een vakman.' : e.tekst, op: e.created_at })),
+    // De volglink wordt ook gedeeld met bewoners die meevolgen: toon dus nooit de naam van de melder.
+    tijdlijn: ev.map((e) => ({ type: e.type, tekst: PUBLIEKE_TEKST[e.type] || e.tekst, op: e.created_at })),
   });
 }
 

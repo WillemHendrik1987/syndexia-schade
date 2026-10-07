@@ -124,11 +124,14 @@ async function melding(req, res) {
   if (!uuid(req.query.id)) return fout(res, 400, 'Ongeldige melding');
   const m = await db.one('sm_meldingen', `id=eq.${req.query.id}&select=*,gebouw:sm_gebouwen(id,naam,adres,toegang_info),aannemer:sm_aannemers(*)`);
   if (!m) return fout(res, 404, 'Niet gevonden');
-  const events = await db.select('sm_events', `melding_id=eq.${m.id}&select=*&order=created_at.asc`);
+  const [events, volgers] = await Promise.all([
+    db.select('sm_events', `melding_id=eq.${m.id}&select=*&order=created_at.asc`),
+    db.select('sm_bevestigingen', `melding_id=eq.${m.id}&email=not.is.null&select=email`),
+  ]);
   const naPaden = events.flatMap((e) => e.data?.fotos || []);
   const [fotos, na] = await Promise.all([signedUrls(m.fotos, 3600 * 6), signedUrls(naPaden, 3600 * 6)]);
   const { ip_hash, ...rest } = m;
-  return ok(res, { melding: { ...rest, fotos_urls: fotos, na_fotos: na, opdracht_url: m.aannemer_token ? `/a/${m.aannemer_token}` : null, volg_url: `/t/${m.track_token}` }, events });
+  return ok(res, { melding: { ...rest, fotos_urls: fotos, na_fotos: na, opdracht_url: m.aannemer_token ? `/a/${m.aannemer_token}` : null, volg_url: `/t/${m.track_token}`, volgers: [...new Set(volgers.map((v) => v.email))] }, events });
 }
 
 async function meldingActie(b, site, res) {

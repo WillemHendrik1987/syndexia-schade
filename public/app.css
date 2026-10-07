@@ -79,6 +79,7 @@ input[type=text], input[type=email], input[type=tel], input[type=password], inpu
 textarea { resize: vertical; min-height: 110px; line-height: 1.45; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--roos); box-shadow: 0 0 0 3px color-mix(in srgb, var(--roos) 18%, transparent); }
 
+[hidden] { display: none !important; } /* anders overschrijft .knop het hidden-attribuut */
 .knop { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: var(--r-m);
   background: var(--bordeaux); color: #fff; font-weight: 700; padding: 14px 20px; cursor: pointer; text-decoration: none;
   font-size: 1rem; transition: background .15s, transform .08s; }

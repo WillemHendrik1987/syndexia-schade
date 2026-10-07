@@ -167,3 +167,16 @@ create table if not exists public.sm_oproepen (
 create index if not exists sm_oproepen_melding on public.sm_oproepen (melding_id);
 create index if not exists sm_oproepen_sid on public.sm_oproepen (call_sid);
 alter table public.sm_oproepen enable row level security;
+
+-- v1.4: "Ik merk dit ook" per toestel bijhouden + bewoners die een bestaande melding mee volgen
+create table if not exists public.sm_bevestigingen (
+  id uuid primary key default gen_random_uuid(),
+  melding_id uuid not null references public.sm_meldingen(id) on delete cascade,
+  ip_hash text,
+  email text,          -- optioneel: dan krijgt deze bewoner dezelfde updates als de melder
+  opmerking text,
+  created_at timestamptz not null default now()
+);
+create index if not exists sm_bevestigingen_melding on public.sm_bevestigingen (melding_id);
+create index if not exists sm_bevestigingen_ip on public.sm_bevestigingen (ip_hash, created_at);
+alter table public.sm_bevestigingen enable row level security;
